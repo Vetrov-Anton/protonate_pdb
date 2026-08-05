@@ -47,7 +47,8 @@ python -m pytest -q   # тесты (нужен установленный GROMAC
 
 ## Быстрый старт
 
-Проверка на маленьком примере из репозитория (~1 с):
+Проверка на маленьком примере из репозитория (~1 с; при установке через pipx
+подставьте свой PDB или скачайте `examples/fragment.pdb`):
 
 ```bash
 protonate -f examples/fragment.pdb -o prepared --ph 7.0 \
