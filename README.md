@@ -1,6 +1,6 @@
 # protprep — протонирование белка с фиксированными состояниями остатков
 
-[![tests](https://github.com/Vetrov-Anton/protprep/actions/workflows/ci.yml/badge.svg)](https://github.com/Vetrov-Anton/protprep/actions/workflows/ci.yml)
+[![tests](https://github.com/Vetrov-Anton/protonate_pdb/actions/workflows/ci.yml/badge.svg)](https://github.com/Vetrov-Anton/protonate_pdb/actions/workflows/ci.yml)
 
 Готовит PDB без водородов к `gmx pdb2gmx`: считает локальные pKa через
 **PROPKA/PDB2PQR** при заданном pH, но состояния перечисленных вами остатков
@@ -18,9 +18,9 @@
 Одной командой, ничего клонировать не нужно:
 
 ```bash
-pipx install git+https://github.com/Vetrov-Anton/protprep.git    # рекомендуется
+pipx install git+https://github.com/Vetrov-Anton/protonate_pdb.git    # рекомендуется
 # или, если pipx нет:
-pip install --user git+https://github.com/Vetrov-Anton/protprep.git
+pip install --user git+https://github.com/Vetrov-Anton/protonate_pdb.git
 ```
 
 После этого в PATH появляется команда `protonate`. Зависимости (`pdb2pqr`,
@@ -33,8 +33,8 @@ pip install --user git+https://github.com/Vetrov-Anton/protprep.git
 <summary>Если хотите править код у себя</summary>
 
 ```bash
-git clone https://github.com/Vetrov-Anton/protprep.git
-cd protprep
+git clone https://github.com/Vetrov-Anton/protonate_pdb.git
+cd protonate_pdb
 ./install.sh          # venv рядом с исходниками (editable), команда ./protonate
 ./install.sh --pipx   # изолированно через pipx
 ./install.sh --user   # pip install --user

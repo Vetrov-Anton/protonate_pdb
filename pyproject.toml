@@ -32,8 +32,8 @@ dependencies = [
 test = ["pytest>=7"]
 
 [project.urls]
-Homepage = "https://github.com/Vetrov-Anton/protprep"
-Issues = "https://github.com/Vetrov-Anton/protprep/issues"
+Homepage = "https://github.com/Vetrov-Anton/protonate_pdb"
+Issues = "https://github.com/Vetrov-Anton/protonate_pdb/issues"
 
 [project.scripts]
 protonate = "protprep.cli:main"
