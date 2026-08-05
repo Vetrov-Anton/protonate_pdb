@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "protprep"
+version = "1.0.0"
+description = "Протонирование белка при заданном pH (PROPKA/PDB2PQR) с принудительно заданными состояниями отдельных остатков и подготовкой к GROMACS pdb2gmx"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+authors = [{ name = "Anton Vetrov" }]
+keywords = [
+    "molecular-dynamics", "gromacs", "pdb2gmx", "propka", "pdb2pqr",
+    "protonation", "pka", "amber", "force-field",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Chemistry",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+dependencies = [
+    "pdb2pqr>=3.6",
+    "propka>=3.5",
+    "numpy>=1.20",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[project.urls]
+Homepage = "https://github.com/Vetrov-Anton/protprep"
+Issues = "https://github.com/Vetrov-Anton/protprep/issues"
+
+[project.scripts]
+protonate = "protprep.cli:main"
+
+[tool.setuptools]
+packages = ["protprep"]

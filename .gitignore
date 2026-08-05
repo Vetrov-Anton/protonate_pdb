@@ -1,0 +1,22 @@
+# окружения и сборка
+.venv/
+build/
+dist/
+*.egg-info/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# результаты работы
+prepared/
+*.gro
+*.top
+*.itp
+\#*\#
+
+# данные конкретного проекта, не часть пакета:
+# структуры качаются с RCSB, силовое поле берётся из вашего GROMACS
+6CFO.pdb
+6CFO.pqr
+6CFO.pka
+*.ff/
