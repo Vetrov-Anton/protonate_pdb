@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Запуск protprep без установки: берём локальный .venv, если он есть,
-# иначе - системный python (тогда pdb2pqr/propka/numpy должны быть уже стоять).
+# Run protprep without installing it: use the local .venv if present,
+# otherwise the system python (which then needs pdb2pqr/propka/numpy).
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -x "$here/.venv/bin/python" ]]; then

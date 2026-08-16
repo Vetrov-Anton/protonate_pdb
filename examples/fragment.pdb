@@ -1,5 +1,5 @@
-REMARK   1 Фрагмент 6CFO (цепь A, остатки 30-70) + кристаллические воды.
-REMARK   1 Нужен только для быстрой проверки protprep - см. examples/README.md
+REMARK   1 Fragment of 6CFO (chain A, residues 30-70) plus crystal waters.
+REMARK   1 Only used as a quick check of protprep - see examples/README.md
 ATOM    238  N   GLU A  30       4.954 -24.070 -86.136  1.00 53.55           N  
 ATOM    239  CA  GLU A  30       4.078 -24.377 -85.012  1.00 55.37           C  
 ATOM    240  C   GLU A  30       4.061 -23.262 -83.959  1.00 50.94           C  

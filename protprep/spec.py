@@ -1,4 +1,4 @@
-"""Разбор пользовательского задания: какие остатки зафиксировать и как."""
+"""Parsing the user's request: which residues to pin, and to what."""
 
 from __future__ import annotations
 
@@ -8,13 +8,13 @@ import re
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
-# --- целевые имена остатков в номенклатуре amber/gromacs-порта ------------
+# --- target residue names in amber/GROMACS-port nomenclature --------------
 PROTONATED = "protonated"
 DEPROTONATED = "deprotonated"
 
-# состояние -> (имя остатка, ветка титрования)
-# ветка нужна, чтобы подсунуть pdb2pqr фиктивное pKa: pH < pKa  => протонированная
-# форма, pH >= pKa => депротонированная.
+# state -> titration branch.
+# The branch is what lets us feed pdb2pqr a fake pKa: pH < pKa => protonated
+# form, pH >= pKa => deprotonated form.
 STATE_TABLE: Dict[str, Dict[str, str]] = {
     "ASP": {"ASP": DEPROTONATED, "ASH": PROTONATED},
     "GLU": {"GLU": DEPROTONATED, "GLH": PROTONATED},
@@ -25,8 +25,8 @@ STATE_TABLE: Dict[str, Dict[str, str]] = {
     "HIS": {"HIP": PROTONATED, "HID": DEPROTONATED, "HIE": DEPROTONATED},
 }
 
-# синонимы -> целевое имя, отдельно для каждого типа остатка.
-# Однобуквенные сокращения (p/d/n/c) добавляются ниже автоматически.
+# synonyms -> target name, per residue type.
+# The one-letter shortcuts (p/d/n/c) are added automatically below.
 ALIASES: Dict[str, Dict[str, str]] = {
     "ASP": {"protonated": "ASH", "neutral": "ASH", "deprotonated": "ASP",
             "charged": "ASP", "ash": "ASH", "asph": "ASH", "asp": "ASP"},
@@ -47,18 +47,18 @@ ALIASES: Dict[str, Dict[str, str]] = {
             "e": "HIE", "his": "HIE"},
 }
 
-# p/d/n/c - короткая запись для protonated/deprotonated/neutral/charged
+# p/d/n/c - shorthand for protonated/deprotonated/neutral/charged
 SHORT = {"p": "protonated", "d": "deprotonated", "n": "neutral", "c": "charged"}
 for _table in ALIASES.values():
     for _short, _long in SHORT.items():
         _table[_short] = _table[_long]
-# у гистидина 'd'/'e' уже заняты тавтомерами HID/HIE - это важнее
+# for histidine 'd'/'e' already mean the HID/HIE tautomers - that wins
 ALIASES["HIS"]["d"] = "HID"
 ALIASES["HIS"]["e"] = "HIE"
 
 TITRATABLE = set(STATE_TABLE)
 
-# --- термини --------------------------------------------------------------
+# --- termini --------------------------------------------------------------
 NTER_STATES = {
     "NH3+": "NH3+", "CHARGED": "NH3+", "NH3": "NH3+", "PROTONATED": "NH3+",
     "P": "NH3+", "C": "NH3+",
@@ -83,7 +83,7 @@ class ResidueSpec:
     chain: str
     resid: int
     icode: str
-    state: str            # уже нормализованное имя остатка (ASH/HID/...)
+    state: str            # normalised residue name (ASH/HID/...)
     raw: str = ""
 
     @property
@@ -94,17 +94,17 @@ class ResidueSpec:
 @dataclass(frozen=True)
 class TerminusSpec:
     chain: str
-    end: str              # 'N' или 'C'
+    end: str              # 'N' or 'C'
     state: str
 
 
 @dataclass
 class Spec:
     ph: float = 7.0
-    # 'propka' - считать локальные сдвиги pKa; 'standard' - взять табличные
+    # 'propka' - compute local pKa shifts; 'standard' - use tabulated values
     pka_source: str = "propka"
-    # 'all' - протонировать всё; 'fixed' - только остатки из --fix, остальные
-    # уходят без водородов (их достроит pdb2gmx)
+    # 'all' - protonate everything; 'fixed' - only the residues listed in --fix,
+    # the rest leave without hydrogens (pdb2gmx will add them)
     hydrogens: str = "all"
     residues: List[ResidueSpec] = field(default_factory=list)
     termini: List[TerminusSpec] = field(default_factory=list)
@@ -123,25 +123,19 @@ class SpecError(ValueError):
     pass
 
 
-_RES_RE = re.compile(
-    r"^\s*(?P<chain>[A-Za-z0-9])?\s*[:/ ]?\s*(?P<resid>-?\d+)(?P<icode>[A-Za-z])?"
-    r"\s*[:= ]\s*(?P<state>\S+)\s*$"
-)
-
-
 def _normalize_state(parent: str, state: str) -> str:
     parent = parent.upper()
     key = state.strip().lower()
     table = ALIASES.get(parent)
     if table is None:
         raise SpecError(
-            f"Остаток {parent} не титруется этим скриптом "
-            f"(поддерживаются: {', '.join(sorted(TITRATABLE))})"
+            f"Residue {parent} is not titratable by this tool "
+            f"(supported: {', '.join(sorted(TITRATABLE))})"
         )
     if key not in table:
         raise SpecError(
-            f"Неизвестное состояние '{state}' для {parent}. "
-            f"Доступно: {', '.join(sorted(set(table.values()) | {'protonated', 'deprotonated'}))}"
+            f"Unknown state '{state}' for {parent}. Available: "
+            f"{', '.join(sorted(set(table.values()) | {'protonated', 'deprotonated'}))}"
         )
     return table[key]
 
@@ -155,34 +149,30 @@ def parse_terminus_token(end: str, value: str) -> str:
     key = value.strip().upper()
     if key not in table:
         raise SpecError(
-            f"Неизвестное состояние {end}-конца: '{value}'. "
-            f"Доступно: {', '.join(sorted(set(table.values())))}"
+            f"Unknown {end}-terminus state: '{value}'. Available: "
+            f"{', '.join(sorted(set(table.values())))}"
         )
     return table[key]
 
 
 def parse_hydrogens(value: str) -> str:
-    """'all' | 'fixed' (синонимы: only-fixed, fix, selected)."""
+    """'all' | 'fixed' (synonyms: only-fixed, fix, selected)."""
     key = value.strip().lower()
     if key in ("all", "full", "everything", "yes"):
         return "all"
     if key in ("fixed", "fix", "only-fixed", "only_fixed", "selected"):
         return "fixed"
-    raise SpecError(
-        f"Неизвестный режим водородов: '{value}'. Доступно: all | fixed"
-    )
+    raise SpecError(f"Unknown hydrogen mode: '{value}'. Available: all | fixed")
 
 
 def parse_pka_source(value: str) -> str:
-    """'propka' | 'standard' (синонимы: model, table, none, no)."""
+    """'propka' | 'standard' (synonyms: model, table, none, no)."""
     key = value.strip().lower()
     if key in ("propka", "local", "yes"):
         return "propka"
     if key in ("standard", "model", "table", "none", "no", "off"):
         return "standard"
-    raise SpecError(
-        f"Неизвестный источник pKa: '{value}'. Доступно: propka | standard"
-    )
+    raise SpecError(f"Unknown pKa source: '{value}'. Available: propka | standard")
 
 
 def parse_fix_token(token: str) -> Tuple[str, int, str, str]:
@@ -193,15 +183,15 @@ def parse_fix_token(token: str) -> Tuple[str, int, str, str]:
     elif len(parts) == 2:
         chain, resid, state = "", parts[0], parts[1]
     else:
-        raise SpecError(f"Не могу разобрать '{token}'. Формат: ЦЕПЬ:НОМЕР:СОСТОЯНИЕ")
+        raise SpecError(f"Cannot parse '{token}'. Format: CHAIN:NUMBER:STATE")
     m = re.fullmatch(r"(-?\d+)([A-Za-z]?)", resid)
     if not m:
-        raise SpecError(f"Плохой номер остатка в '{token}'")
+        raise SpecError(f"Bad residue number in '{token}'")
     return chain, int(m.group(1)), m.group(2).upper(), state
 
 
 def load_spec(path: str) -> Spec:
-    """JSON или простой текстовый формат."""
+    """JSON or the plain text format."""
     text = open(path, errors="replace").read()
     if os.path.splitext(path)[1].lower() == ".json" or text.lstrip().startswith("{"):
         return _load_json(text)
@@ -265,7 +255,7 @@ def _load_text(text: str) -> Spec:
                 chain, resid, icode, state = parse_fix_token(" ".join(parts[:2]))
                 spec.residues.append(ResidueSpec(chain, resid, icode, state, state))
             else:
-                raise SpecError(f"не понял строку: '{raw.strip()}'")
+                raise SpecError(f"cannot understand the line: '{raw.strip()}'")
         except (IndexError, ValueError) as err:
-            raise SpecError(f"Строка {lineno}: {err}")
+            raise SpecError(f"Line {lineno}: {err}")
     return spec

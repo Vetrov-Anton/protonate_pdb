@@ -1,8 +1,8 @@
-"""Локальные операции с протонами: постановка/снятие титруемых H и кэпирование.
+"""Local proton surgery: adding/removing titratable H and building caps.
 
-Всё, что pdb2pqr отказывается делать для силового поля AMBER (например,
-протонировать ASP на конце цепи или депротонировать TYR), доделываем здесь
-геометрически.
+Everything pdb2pqr refuses to do for the AMBER force field (protonating an ASP
+at a chain terminus, deprotonating a TYR, choosing a histidine tautomer) is
+finished off here, geometrically.
 """
 
 from __future__ import annotations
@@ -15,8 +15,8 @@ import numpy as np
 from .geometry import best_torsion, dihedral, place_atom
 from .pdbio import Atom
 
-# ---------------------------------------------------------------- титруемые H
-# имя H -> (ref, middle, root, длина связи, угол, торсион | None = подобрать)
+# ------------------------------------------------------------ titratable H
+# H name -> (ref, middle, root, bond length, angle, torsion | None = search)
 PROTON_GEOMETRY: Dict[str, Dict[str, tuple]] = {
     "ASP": {"HD2": ("OD1", "CG", "OD2", 0.98, 113.0, 0.0)},
     "GLU": {"HE2": ("OE1", "CD", "OE2", 0.98, 113.0, 0.0)},
@@ -30,7 +30,7 @@ PROTON_GEOMETRY: Dict[str, Dict[str, tuple]] = {
     },
 }
 
-# семейство -> {имя состояния: набор титруемых протонов, которые должны быть}
+# family -> {state name: titratable protons that must be present}
 STATE_PROTONS: Dict[str, Dict[str, frozenset]] = {
     "ASP": {"ASP": frozenset(), "ASH": frozenset({"HD2"})},
     "GLU": {"GLU": frozenset(), "GLH": frozenset({"HE2"})},
@@ -60,7 +60,7 @@ def _by_name(atoms: Sequence[Atom]) -> Dict[str, Atom]:
 
 
 def _template(res: Sequence[Atom], name: str, xyz) -> Atom:
-    """Новый атом-водород по образцу остатка."""
+    """A new hydrogen atom modelled on the residue it belongs to."""
     ref = res[0]
     return Atom(
         record=ref.record, serial=0, name=name, altloc=" ", resname=ref.resname,
@@ -72,19 +72,19 @@ def _template(res: Sequence[Atom], name: str, xyz) -> Atom:
 
 def add_proton(res: List[Atom], hname: str, fam: str,
                cloud: Optional[np.ndarray] = None) -> Tuple[bool, str]:
-    """Ставит титруемый протон hname. Возвращает (успех, сообщение)."""
+    """Place the titratable proton `hname`. Returns (success, message)."""
     geom = PROTON_GEOMETRY[fam].get(hname)
     if geom is None:
-        return False, f"нет геометрии для {hname}"
+        return False, f"no geometry for {hname}"
     ref, mid, root, bond, ang, tors = geom
     idx = _by_name(res)
     for need in (ref, mid, root):
         if need not in idx:
-            return False, f"в структуре нет тяжёлого атома {need}"
+            return False, f"heavy atom {need} is missing from the structure"
     a, b, c = idx[ref], idx[mid], idx[root]
 
     if tors is None:
-        # ищем свободный поворот с учётом уже стоящих на root водородов
+        # look for a free rotation, accounting for hydrogens already on root
         siblings = [
             at for at in res
             if at.element == "H" and at.name != hname
@@ -112,30 +112,33 @@ def add_proton(res: List[Atom], hname: str, fam: str,
 
 def set_state(res: List[Atom], target: str,
               cloud: Optional[np.ndarray] = None) -> Tuple[List[Atom], List[str]]:
-    """Приводит остаток к состоянию target (ASH/HID/LYN/...). Возвращает
-    (новый список атомов, список замечаний)."""
+    """Bring a residue to the `target` state (ASH/HID/LYN/...).
+
+    Returns (new atom list, notes).
+    """
     notes: List[str] = []
     fam = family(target)
     if fam is None:
-        return res, [f"состояние {target} не поддерживается"]
+        return res, [f"state {target} is not supported"]
     wanted = STATE_PROTONS[fam][target]
     titratable = set(PROTON_GEOMETRY[fam])
 
     out = [a for a in res if not (a.name in titratable and a.name not in wanted)]
     removed = {a.name for a in res} - {a.name for a in out}
     for name in sorted(removed):
-        notes.append(f"снят протон {name}")
+        notes.append(f"removed proton {name}")
 
     have = {a.name for a in out}
     for name in sorted(wanted - have):
         ok, msg = add_proton(out, name, fam, cloud)
-        notes.append(f"добавлен протон {name}" if ok else f"НЕ добавлен {name}: {msg}")
+        notes.append(f"added proton {name}" if ok
+                     else f"FAILED to add {name}: {msg}")
 
     out = [replace(a, resname=target) for a in out]
     return out, notes
 
 
-# ------------------------------------------------------------------ кэпы
+# ------------------------------------------------------------------- caps
 def _mk(res_ref: Atom, name: str, resname: str, resseq: int, xyz,
         element: str) -> Atom:
     return Atom(
@@ -146,7 +149,7 @@ def _mk(res_ref: Atom, name: str, resname: str, resseq: int, xyz,
 
 
 def _methyl(root, neighbor, ref, res_ref, resname, resseq, names, cloud):
-    """Три водорода метила root; поворот подбираем по минимуму контактов."""
+    """Three methyl hydrogens on root; the rotation minimises contacts."""
     tors, _ = best_torsion(ref, neighbor, root, 1.09, 109.5, cloud, preferred=60.0,
                            step=20.0)
     out = []
@@ -157,15 +160,18 @@ def _methyl(root, neighbor, ref, res_ref, resname, resseq, names, cloud):
 
 
 def cap_nterm_ace(res: List[Atom], cloud: np.ndarray) -> Tuple[List[Atom], List[Atom], List[str]]:
-    """ACE-кэп перед первым остатком. Возвращает (атомы ACE, изменённый остаток, заметки)."""
+    """ACE cap in front of the first residue.
+
+    Returns (ACE atoms, modified residue, notes).
+    """
     idx = _by_name(res)
     notes: List[str] = []
     for need in ("N", "CA", "C"):
         if need not in idx:
-            return [], res, [f"нет атома {need}, ACE не поставлен"]
+            return [], res, [f"atom {need} is missing, ACE not built"]
     n, ca, c = idx["N"], idx["CA"], idx["C"]
 
-    # убираем "лишние" протоны NH3+
+    # drop the "extra" NH3+ protons
     body = [a for a in res if a.name not in ("H1", "H2", "H3", "HN1", "HN2", "HN3")]
     resseq = res[0].resseq - 1
 
@@ -179,26 +185,26 @@ def cap_nterm_ace(res: List[Atom], cloud: np.ndarray) -> Tuple[List[Atom], List[
     hs = _methyl(ace_ch3, ace_c, ace_o, res[0], "ACE", resseq,
                  ["HH31", "HH32", "HH33"], cloud)
 
-    # амидный H на N (для PRO его нет)
+    # amide H on N (proline has none)
     if res[0].resname != "PRO":
         h_pos = place_atom(ace_o, ace_c, n, 1.01, 119.8, 180.0)
         body.append(_template(body, "H", h_pos))
-        notes.append("N-конец: NH3+ -> амидный H + ACE")
+        notes.append("N-terminus: NH3+ -> amide H + ACE")
     else:
-        notes.append("N-конец: PRO кэпирован ACE (протоны на N убраны)")
+        notes.append("N-terminus: PRO capped with ACE (protons on N removed)")
 
-    ace = [hs[0], ace_ch3, hs[1], hs[2], ace_c, ace_o]  # порядок как в rtp
+    ace = [hs[0], ace_ch3, hs[1], hs[2], ace_c, ace_o]  # order as in the rtp
     return ace, body, notes
 
 
 def cap_cterm(res: List[Atom], cloud: np.ndarray,
               kind: str = "NME") -> Tuple[List[Atom], List[Atom], List[str]]:
-    """NME/NHE-кэп после последнего остатка."""
+    """NME/NHE cap after the last residue."""
     idx = _by_name(res)
     notes: List[str] = []
     for need in ("N", "CA", "C", "O"):
         if need not in idx:
-            return [], res, [f"нет атома {need}, {kind} не поставлен"]
+            return [], res, [f"atom {need} is missing, {kind} not built"]
     n, ca, c, o = idx["N"], idx["CA"], idx["C"], idx["O"]
 
     body = [a for a in res if a.name not in ("OXT", "HXT", "OT2", "HO")]
@@ -216,8 +222,8 @@ def cap_cterm(res: List[Atom], cloud: np.ndarray,
         hs = _methyl(cap_ch3, cap_n, c, res[0], kind, resseq,
                      ["HH31", "HH32", "HH33"], cloud)
         cap = [cap_n, cap_h, cap_ch3] + hs
-        notes.append("C-конец: COO- -> NME")
-    else:  # NHE - амид NH2
+        notes.append("C-terminus: COO- -> NME")
+    else:  # NHE - amide NH2
         h1 = place_atom(o, c, cap_n, 1.01, 119.8, 180.0)
         h2 = place_atom(o, c, cap_n, 1.01, 119.8, 0.0)
         cap = [
@@ -225,7 +231,7 @@ def cap_cterm(res: List[Atom], cloud: np.ndarray,
             _mk(res[0], "H1", kind, resseq, h1, "H"),
             _mk(res[0], "H2", kind, resseq, h2, "H"),
         ]
-        notes.append("C-конец: COO- -> NHE (амид)")
+        notes.append("C-terminus: COO- -> NHE (amide)")
     return cap, body, notes
 
 

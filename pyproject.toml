@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "protprep"
 version = "1.1.0"
-description = "Протонирование белка при заданном pH (PROPKA/PDB2PQR) с принудительно заданными состояниями отдельных остатков и подготовкой к GROMACS pdb2gmx"
+description = "Protonate proteins at a given pH (PROPKA/PDB2PQR) with pinned states for selected residues, ready for GROMACS pdb2gmx"
 readme = "README.md"
 requires-python = ">=3.9"
 license = { file = "LICENSE" }

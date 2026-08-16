@@ -1,4 +1,4 @@
-# окружения и сборка
+# environments and build artifacts
 .venv/
 build/
 dist/
@@ -7,15 +7,15 @@ __pycache__/
 *.pyc
 .pytest_cache/
 
-# результаты работы
+# run output
 prepared/
 *.gro
 *.top
 *.itp
 \#*\#
 
-# данные конкретного проекта, не часть пакета:
-# структуры качаются с RCSB, силовое поле берётся из вашего GROMACS
+# project-specific data, not part of the package:
+# structures come from RCSB, force fields from your GROMACS install
 6CFO.pdb
 6CFO.pqr
 6CFO.pka

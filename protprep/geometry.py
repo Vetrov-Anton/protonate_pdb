@@ -1,4 +1,4 @@
-"""Геометрия: построение атома по внутренним координатам (NeRF) и метрики."""
+"""Geometry: building an atom from internal coordinates (NeRF) plus metrics."""
 
 from __future__ import annotations
 
@@ -19,14 +19,14 @@ def distance(a, b) -> float:
 
 
 def angle(a, b, c) -> float:
-    """Угол a-b-c в градусах."""
+    """Angle a-b-c in degrees."""
     v1, v2 = _v(a) - _v(b), _v(c) - _v(b)
     cos = np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2))
     return math.degrees(math.acos(max(-1.0, min(1.0, cos))))
 
 
 def dihedral(a, b, c, d) -> float:
-    """Двугранный угол a-b-c-d в градусах (IUPAC)."""
+    """Dihedral angle a-b-c-d in degrees (IUPAC convention)."""
     p0, p1, p2, p3 = _v(a), _v(b), _v(c), _v(d)
     b0, b1, b2 = p0 - p1, p2 - p1, p3 - p2
     b1n = b1 / np.linalg.norm(b1)
@@ -38,9 +38,9 @@ def dihedral(a, b, c, d) -> float:
 
 
 def place_atom(a, b, c, bond: float, ang: float, tors: float) -> np.ndarray:
-    """Ставит атом D: |C-D| = bond, угол(B,C,D) = ang, двугранный(A,B,C,D) = tors.
+    """Place atom D so that |C-D| = bond, angle(B,C,D) = ang, dihedral(A,B,C,D) = tors.
 
-    Классический NeRF (natural extension reference frame).
+    Classic NeRF (natural extension reference frame).
     """
     pa, pb, pc = _v(a), _v(b), _v(c)
     ang_r, tors_r = math.radians(ang), math.radians(tors)
@@ -56,7 +56,7 @@ def place_atom(a, b, c, bond: float, ang: float, tors: float) -> np.ndarray:
     bc /= np.linalg.norm(bc)
     n = np.cross(pb - pa, bc)
     norm = np.linalg.norm(n)
-    if norm < 1e-8:  # вырожденный случай: A, B, C коллинеарны
+    if norm < 1e-8:  # degenerate case: A, B, C are collinear
         n = np.cross(bc, np.array([1.0, 0.0, 0.0]))
         norm = np.linalg.norm(n)
         if norm < 1e-8:
@@ -69,7 +69,7 @@ def place_atom(a, b, c, bond: float, ang: float, tors: float) -> np.ndarray:
 
 def tetrahedral_hydrogens(root, neighbor, ref, bond: float = 1.09,
                           ang: float = 109.5, start: float = 60.0) -> list:
-    """Три H метильной группы root(-neighbor), заслонённые относительно ref."""
+    """Three methyl hydrogens on root(-neighbor), staggered relative to ref."""
     return [
         place_atom(ref, neighbor, root, bond, ang, start + 120.0 * i)
         for i in range(3)
@@ -84,9 +84,11 @@ def min_distance_to(point: Sequence[float], cloud: np.ndarray) -> float:
 
 def best_torsion(a, b, c, bond: float, ang: float, cloud: np.ndarray,
                  preferred: float = 180.0, step: float = 15.0):
-    """Выбирает двугранный угол, при котором новый атом меньше всего "втыкается"
-    в окружение. Стартуем от preferred и берём первый достаточно свободный,
-    иначе - глобально лучший."""
+    """Pick the dihedral that puts the new atom least into its surroundings.
+
+    Starts from `preferred` and returns it right away if it is clear enough,
+    otherwise returns the globally best option.
+    """
     best, best_score = preferred, -1.0
     for i in range(int(360 / step)):
         tors = preferred + step * i
@@ -94,6 +96,6 @@ def best_torsion(a, b, c, bond: float, ang: float, cloud: np.ndarray,
         score = min_distance_to(pos, cloud)
         if score > best_score:
             best, best_score = tors, score
-        if i == 0 and score > 2.9:      # исходная (транс) позиция свободна
+        if i == 0 and score > 2.9:      # the original (trans) position is free
             return tors, score
     return best, best_score

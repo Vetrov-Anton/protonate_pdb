@@ -1,16 +1,17 @@
-"""Термини: что доступно в силовом поле и как это называется.
+"""Termini: what the force field offers and how it is named.
 
-Важно: скрипт **никогда** ничего не пишет в каталог силового поля. Если нужного
-блока в нём нет - выдаётся ошибка, а не самодельный блок с придуманными
-зарядами.
+Important: this tool **never** writes anything into the force field directory.
+If a required building block is missing, it reports an error instead of
+inventing a block with made-up charges.
 
-В amber-портах GROMACS файлы aminoacids.n.tdb / aminoacids.c.tdb пустые: тип
-конца задаётся не модификацией, а отдельным блоком rtp (NALA/CALA). Нейтральных
-вариантов (NH2 и COOH) там обычно просто нет. Если вы добавили их в своё
-силовое поле сами, назовите блоки по этой схеме - и они будут подхвачены:
+In the GROMACS amber ports aminoacids.n.tdb / aminoacids.c.tdb are empty: the
+terminus type comes not from a modification but from a separate rtp block
+(NALA/CALA). Neutral variants (NH2 and COOH) are usually absent altogether.
+If you added them to your own force field, name the blocks following this
+scheme and they will be picked up:
 
-    ZXXX - нейтральный N-конец  (NH2),  например ZALA
-    JXXX - нейтральный C-конец (COOH),  например JALA
+    ZXXX - neutral N-terminus  (NH2),  e.g. ZALA
+    JXXX - neutral C-terminus (COOH),  e.g. JALA
 """
 
 from __future__ import annotations
@@ -33,7 +34,7 @@ def neutral_cter_name(resname: str) -> str:
 
 
 def system_residuetypes() -> Tuple[Optional[str], Set[str]]:
-    """Путь к residuetypes.dat установленного GROMACS и известные ему имена."""
+    """Path to the installed GROMACS residuetypes.dat and the names it knows."""
     candidates: List[str] = []
     gmxdata = os.environ.get("GMXDATA")
     if gmxdata:
@@ -55,6 +56,6 @@ def system_residuetypes() -> Tuple[Optional[str], Set[str]]:
 
 
 def check_neutral_block(ff: ForceField, resname: str, end: str) -> Optional[str]:
-    """Имя блока нейтрального конца, если он есть в силовом поле."""
+    """Name of the neutral terminus block, if the force field has one."""
     name = neutral_nter_name(resname) if end == "N" else neutral_cter_name(resname)
     return name if name in ff.rtp else None

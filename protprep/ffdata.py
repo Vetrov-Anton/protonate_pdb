@@ -1,9 +1,10 @@
-"""Чтение данных силового поля GROMACS (*.rtp, *.r2b) и приведение имён атомов.
+"""Reading GROMACS force field data (*.rtp, *.r2b) and matching atom names.
 
-Идея: pdb2pqr выдаёт структуру в номенклатуре AMBER (HB2/HB3, CD1 у ILE, OXT...),
-а gromacs-порт amber99sb-ildn ждёт свою (HB1/HB2, CD, OC1/OC2...). Вместо
-захардкоженной таблицы мы читаем сам rtp из папки силового поля и сопоставляем
-имена автоматически - тогда скрипт переживёт любую правку ff.
+The idea: pdb2pqr emits structures in AMBER nomenclature (HB2/HB3, CD1 in ILE,
+OXT...) while the GROMACS amber99sb-ildn port expects its own (HB1/HB2, CD,
+OC1/OC2...). Instead of a hard-coded table we read the rtp files from the force
+field directory and derive the mapping automatically - that way the script
+survives any local edit of the force field.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ SECTION_KEYWORDS = {
     "cmap", "bondedtypes",
 }
 
-# Явные соответствия, которые нельзя вывести автоматически (симметричные пары).
+# Explicit correspondences that cannot be derived automatically (symmetric pairs).
 EXPLICIT_RENAME: Dict[str, Dict[str, str]] = {
     "*": {"OXT": "OC1", "O''": "OC1"},
 }
@@ -41,7 +42,7 @@ class RtpEntry:
         return [a[0] for a in self.atoms]
 
     def parents(self) -> Dict[str, str]:
-        """Для каждого водорода - тяжёлый атом, к которому он привязан."""
+        """For every hydrogen, the heavy atom it is bonded to."""
         heavy = {n for n in self.atom_names if not _is_h(n)}
         out: Dict[str, str] = {}
         for a, b in self.bonds:
@@ -56,7 +57,7 @@ def _is_h(name: str) -> bool:
 
 
 def gromacs_top_dirs() -> List[str]:
-    """Каталоги top установленного GROMACS, где лежат *.ff."""
+    """Top directories of the installed GROMACS where *.ff live."""
     out = []
     gmxdata = os.environ.get("GMXDATA")
     if gmxdata:
@@ -70,9 +71,9 @@ def gromacs_top_dirs() -> List[str]:
 
 
 def resolve_ff_path(name: str) -> str:
-    """Ищет каталог силового поля: как указано, рядом, затем в GROMACS.
+    """Locate a force field directory: as given, nearby, then inside GROMACS.
 
-    Принимает и путь, и просто имя - с суффиксом .ff и без него.
+    Accepts both a path and a bare name, with or without the .ff suffix.
     """
     variants = [name, name + ".ff"] if not name.endswith(".ff") else [name]
     for variant in variants:
@@ -93,13 +94,13 @@ def resolve_ff_path(name: str) -> str:
     )
     hint = ""
     if available:
-        hint = ("\nВ установленном GROMACS есть: " + ", ".join(available)
-                + "\nУкажите нужное через --ff (можно просто именем).")
-    raise FileNotFoundError(f"Каталог силового поля не найден: {name}{hint}")
+        hint = ("\nThe installed GROMACS provides: " + ", ".join(available)
+                + "\nPick one with --ff (a bare name is fine).")
+    raise FileNotFoundError(f"Force field directory not found: {name}{hint}")
 
 
 class ForceField:
-    """Ленивая обёртка над каталогом <name>.ff."""
+    """Lazy wrapper around a <name>.ff directory."""
 
     def __init__(self, path: str):
         self.path = resolve_ff_path(path)
@@ -158,7 +159,7 @@ class ForceField:
             if main != "-":
                 self.ff2gmx.setdefault(main, gmx)
 
-    # ------------------------------------------------------------- запросы
+    # --------------------------------------------------------------- lookup
     def block_for(self, resname: str, position: str = "middle") -> Optional[RtpEntry]:
         """position: 'middle' | 'nter' | 'cter'."""
         gmx = self.ff2gmx.get(resname, resname)
@@ -182,8 +183,8 @@ class ForceField:
         return None
 
 
-# Пары "протонированная форма -> депротонированная": заряд второй обязан быть
-# ровно на 1 меньше. В некоторых портах amber это нарушено (например TYN).
+# Pairs "protonated form -> deprotonated form": the charge of the second one
+# must be exactly one lower. Some amber ports get this wrong (TYN, for example).
 PROTONATION_PAIRS = [
     ("ASH", "ASP"), ("GLH", "GLU"), ("LYS", "LYN"), ("CYS", "CYM"),
     ("TYR", "TYN"), ("ARG", "ARN"), ("HIP", "HID"), ("HIP", "HIE"),
@@ -191,11 +192,11 @@ PROTONATION_PAIRS = [
 
 
 def check_pair_charges(ff: "ForceField", used: set) -> List[Tuple[str, float, str]]:
-    """Ищет блоки с неверным (дробным) зарядом среди реально использованных.
+    """Find blocks with a broken (fractional) charge among those actually used.
 
-    Ничего не чинит: каталог силового поля открывается только на чтение.
+    Fixes nothing: the force field directory is opened read-only.
 
-    :returns: список (блок, расхождение, эталонный блок)
+    :returns: list of (block, discrepancy, reference block)
     """
     out = []
     for prot, deprot in PROTONATION_PAIRS:
@@ -220,11 +221,11 @@ def reconcile_residue(
     parents: Dict[str, str],
     block: RtpEntry,
 ) -> Tuple[Dict[str, str], List[str], List[str]]:
-    """Сопоставляет имена атомов остатка с именами из rtp.
+    """Match the atom names of a residue against the names in the rtp block.
 
-    :param struct_names: имена атомов в структуре (в порядке файла)
-    :param parents: водород -> тяжёлый атом (из геометрии структуры)
-    :returns: (переименования, лишние атомы, недостающие атомы rtp)
+    :param struct_names: atom names in the structure (in file order)
+    :param parents: hydrogen -> heavy atom (taken from the structure geometry)
+    :returns: (renames, extra atoms, missing rtp atoms)
     """
     rtp_names = block.atom_names
     rename: Dict[str, str] = {}
@@ -238,18 +239,19 @@ def reconcile_residue(
         if dst in remaining_rtp:
             remaining_rtp.remove(dst)
 
-    # 1. явные правила (OXT -> OC1 и т.п.)
+    # 1. explicit rules (OXT -> OC1 and friends)
     for src, dst in EXPLICIT_RENAME["*"].items():
         if src in remaining_struct and dst in remaining_rtp:
             take(src, dst)
 
-    # 2. совпадающие имена
+    # 2. names that already match
     for name in list(remaining_struct):
         if name in remaining_rtp:
             take(name, name)
 
-    # 3. тяжёлые атомы: если осталось ровно по одному кандидату с одинаковым
-    #    первым символом (элементом) - связываем (ILE CD1 -> CD, C-конец O -> OC2)
+    # 3. heavy atoms: if exactly one candidate is left on each side with the
+    #    same leading character (element), pair them up (ILE CD1 -> CD,
+    #    C-terminal O -> OC2)
     left_heavy = [n for n in remaining_struct if not _is_h(n)]
     right_heavy = [n for n in remaining_rtp if not _is_h(n)]
     for elem in {n[0] for n in left_heavy}:
@@ -259,7 +261,7 @@ def reconcile_residue(
             for src, dst in zip(lhs, rhs):
                 take(src, dst)
 
-    # 4. водороды: группируем по тяжёлому "родителю" и раздаём имена по порядку
+    # 4. hydrogens: group by their heavy parent and hand out names in order
     rtp_parents = block.parents()
     by_parent_struct: Dict[str, List[str]] = {}
     for name in remaining_struct:

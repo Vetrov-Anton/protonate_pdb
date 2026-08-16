@@ -1,4 +1,4 @@
-"""Командный интерфейс."""
+"""Command line interface."""
 
 from __future__ import annotations
 
@@ -17,90 +17,94 @@ from .spec import (Spec, SpecError, TerminusSpec, ResidueSpec, load_spec,
 LOG = logging.getLogger("protprep")
 
 EPILOG = """
-примеры:
-  # Asp145 протонирован, His264 - тавтомер HIE, остальное - по PROPKA
+examples:
+  # Asp145 protonated, His264 as the HIE tautomer, everything else from PROPKA
   protonate -f 6CFO.pdb --ph 7.4 --fix A:145:p --fix A:264:HIE
 
-  # закрыть концы цепи A кэпами, цепь B оставить заряженной
+  # cap both ends of chain A, leave chain B charged
   protonate -f 6CFO.pdb --nter A:ACE --cter A:NME
 
-  # то же самое через файл задания
+  # the same thing through a spec file
   protonate -f 6CFO.pdb --spec fixed.txt
 
-формат файла задания (текст или json):
+spec file format (text or json):
   pH 7.4
   A 145 p               # ASP -> ASH
-  A 264 HIE             # тавтомер гистидина
+  A 264 HIE             # histidine tautomer
   B 87  d               # LYS -> LYN
-  *  63 HIE             # во всех цепях сразу
+  *  63 HIE             # in every chain at once
   nter A ACE
   cter A NME
-  pka standard          # не считать PROPKA
-  hydrogens fixed       # H только у остатков из --fix
+  pka standard          # do not run PROPKA
+  hydrogens fixed       # H only on the residues from --fix
 
-источник pKa:
-  по умолчанию - PROPKA (локальные сдвиги). С --standard-pka PROPKA не
-  запускается вовсе: все незафиксированные группы, включая N- и C-концы,
-  берутся по стандартным pKa свободных аминокислот при заданном pH.
+pKa source:
+  PROPKA (local shifts) by default. With --standard-pka PROPKA is not run at
+  all: every unpinned group, N- and C-termini included, follows the standard
+  pKa values of free amino acids at the requested pH.
 
-водороды:
-  по умолчанию протонируется вся структура. С --only-fixed-h водороды остаются
-  только у остатков из --fix (и у кэпов), остальные уезжают без водородов -
-  их достроит gmx pdb2gmx. Имена остатков, а значит и состояния, сохраняются.
+hydrogens:
+  the whole structure is protonated by default. With --only-fixed-h hydrogens
+  are kept only on the residues from --fix (and on the caps); the rest leave
+  without hydrogens and gmx pdb2gmx rebuilds them. Residue names, and thus the
+  states, are preserved.
 
-состояния:
+states:
   p = protonated, d = deprotonated, n = neutral, c = charged
-  или прямое имя: ASP|ASH, GLU|GLH, LYS|LYN, CYS|CYM|CYX, TYR|TYN,
-                  ARG|ARN, HID|HIE|HIP   (у HIS: d = HID, e = HIE, p = HIP)
-концы:
+  or an explicit name: ASP|ASH, GLU|GLH, LYS|LYN, CYS|CYM|CYX, TYR|TYN,
+                       ARG|ARN, HID|HIE|HIP  (for HIS: d = HID, e = HIE, p = HIP)
+termini:
   N -> NH3+ (p, c) | NH2 (n, d) | ACE ;  C -> COO- (d, c) | COOH (p, n) | NME | NHE
 
-Силовое поле используется только на чтение. Если в нём нет нужного блока,
-скрипт сообщает об этом и не пишет ничего.
+The force field is opened read-only. If a required block is missing, the tool
+says so and writes nothing.
 """
 
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="protonate",
-        description="Протонирование белка при заданном pH (PROPKA) с "
-                    "принудительно заданными состояниями отдельных остатков.",
+        description="Protonate a protein at a given pH (PROPKA) with the "
+                    "states of selected residues pinned by hand.",
         epilog=EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p.add_argument("-f", "--pdb", required=True, help="входной PDB (без водородов)")
-    p.add_argument("-o", "--outdir", default="prepared", help="каталог результата")
-    p.add_argument("-n", "--name", default="protonated.pdb", help="имя выходного PDB")
-    p.add_argument("--ph", type=float, default=None, help="pH среды (по умолчанию 7.0)")
+    p.add_argument("-f", "--pdb", required=True, help="input PDB (without hydrogens)")
+    p.add_argument("-o", "--outdir", default="prepared", help="output directory")
+    p.add_argument("-n", "--name", default="protonated.pdb", help="output PDB name")
+    p.add_argument("--ph", type=float, default=None,
+                   help="pH of the medium (default 7.0)")
     p.add_argument("--standard-pka", "--no-propka", dest="standard_pka",
                    action="store_true",
-                   help="не запускать PROPKA: все незафиксированные группы, "
-                        "включая N- и C-концы, берутся в состоянии по "
-                        "стандартным (табличным) pKa при заданном pH")
+                   help="do not run PROPKA: every unpinned group, termini "
+                        "included, takes the state implied by the standard "
+                        "(tabulated) pKa at the given pH")
     p.add_argument("--only-fixed-h", "--strip-other-h", dest="only_fixed_h",
                    action="store_true",
-                   help="поставить водороды только остаткам из --fix (и кэпам), "
-                        "все прочие оставить без водородов - их достроит "
-                        "gmx pdb2gmx сам")
+                   help="place hydrogens only on the residues from --fix (and "
+                        "on the caps), leaving all the others without "
+                        "hydrogens - gmx pdb2gmx will add them")
     p.add_argument("--ff", default="amber-99sb-ildn.ff",
-                   help="каталог силового поля GROMACS (*.ff)")
-    p.add_argument("--spec", help="файл задания (txt или json)")
-    p.add_argument("--fix", action="append", default=[], metavar="ЦЕПЬ:НОМЕР:СОСТОЯНИЕ",
-                   help="зафиксировать состояние остатка (можно повторять)")
-    p.add_argument("--nter", action="append", default=[], metavar="ЦЕПЬ:СОСТОЯНИЕ",
-                   help="состояние N-конца цепи: NH3+|NH2|ACE")
-    p.add_argument("--cter", action="append", default=[], metavar="ЦЕПЬ:СОСТОЯНИЕ",
-                   help="состояние C-конца цепи: COO-|COOH|NME|NHE")
-    p.add_argument("--drop-water", action="store_true", help="выбросить воду")
+                   help="GROMACS force field: a path or a bare name")
+    p.add_argument("--spec", help="spec file (txt or json)")
+    p.add_argument("--fix", action="append", default=[],
+                   metavar="CHAIN:NUMBER:STATE",
+                   help="pin the state of a residue (repeatable)")
+    p.add_argument("--nter", action="append", default=[], metavar="CHAIN:STATE",
+                   help="N-terminus state of a chain: NH3+|NH2|ACE")
+    p.add_argument("--cter", action="append", default=[], metavar="CHAIN:STATE",
+                   help="C-terminus state of a chain: COO-|COOH|NME|NHE")
+    p.add_argument("--drop-water", action="store_true", help="discard water")
     p.add_argument("--drop-het", action="store_true",
-                   help="выбросить лиганды/ионы (HETATM)")
-    p.add_argument("--no-debump", action="store_true", help="pdb2pqr без debump")
+                   help="discard ligands/ions (HETATM)")
+    p.add_argument("--no-debump", action="store_true",
+                   help="pdb2pqr without debumping")
     p.add_argument("--no-opt", action="store_true",
-                   help="pdb2pqr без оптимизации водородных связей")
-    p.add_argument("--water", default="tip3p", help="модель воды для pdb2gmx")
+                   help="pdb2pqr without hydrogen bond optimisation")
+    p.add_argument("--water", default="tip3p", help="water model for pdb2gmx")
     p.add_argument("--run-pdb2gmx", action="store_true",
-                   help="сразу проверить результат запуском gmx pdb2gmx")
-    p.add_argument("--gmx", default="gmx", help="исполняемый файл gromacs")
+                   help="check the result right away by running gmx pdb2gmx")
+    p.add_argument("--gmx", default="gmx", help="gromacs executable")
     p.add_argument("-v", "--verbose", action="store_true")
     return p
 
@@ -175,39 +179,39 @@ def write_report(result: Result, spec: Spec, outdir: str) -> None:
 def summarize(result: Result, spec: Spec) -> None:
     changed = [r for r in result.residues if r.original != r.final]
     forced = [r for r in result.residues if r.forced]
-    source = ("стандартные pKa (PROPKA не запускалась)"
-              if spec.pka_source == "standard" else "локальные pKa из PROPKA")
+    source = ("standard pKa (PROPKA was not run)"
+              if spec.pka_source == "standard" else "local pKa from PROPKA")
     print(f"\npH = {spec.ph:.2f}; {source}")
-    print(f"структура: {result.output_pdb}")
-    print(f"остатков со сдвинутым состоянием: {len(changed)} "
-          f"(из них зафиксировано вручную: {len(forced)})")
+    print(f"structure: {result.output_pdb}")
+    print(f"residues with a shifted state: {len(changed)} "
+          f"(pinned by hand: {len(forced)})")
     if changed:
-        label = "pKa(табл.)" if spec.pka_source == "standard" else "pKa(PROPKA)"
-        print(f"\n  цепь остаток   было -> стало   {label}  источник")
+        label = "pKa(table)" if spec.pka_source == "standard" else "pKa(PROPKA)"
+        print(f"\n  chain residue    was -> now   {label}  source")
         for r in changed:
             pka = f"{r.pka:8.2f}" if r.pka is not None else "       -"
-            src = ("ЗАДАНО" if r.forced
-                   else ("таблица" if spec.pka_source == "standard" else "propka"))
-            print(f"  {r.chain:>4} {r.resid:>7}   {r.original:>4} -> {r.final:<5} "
+            src = ("PINNED" if r.forced
+                   else ("table" if spec.pka_source == "standard" else "propka"))
+            print(f"  {r.chain:>5} {r.resid:>7}   {r.original:>4} -> {r.final:<5} "
                   f"{pka}   {src}")
     missing_forced = [r for r in forced if r.original == r.final]
     if missing_forced:
-        print("\n  зафиксированы, состояние совпало с исходным именем:")
+        print("\n  pinned, state already matched the input name:")
         for r in missing_forced:
             print(f"  {r.chain}:{r.resid} {r.final}")
     if result.termini:
-        print("\nконцы цепей:")
+        print("\nchain termini:")
         for note in result.termini:
             print(f"  {note}")
     if result.warnings:
-        print("\nпредупреждения:")
+        print("\nwarnings:")
         for w in result.warnings:
             print(f"  ! {w}")
-    print(f"\nдальше:\n  {result.pdb2gmx_cmd}\n")
+    print(f"\nnext:\n  {result.pdb2gmx_cmd}\n")
 
 
 def find_gmx(name: str = "gmx") -> str | None:
-    """gmx часто не в PATH (нужен GMXRC) - поищем в типичных местах."""
+    """gmx is often not on PATH (GMXRC needed) - look in the usual places."""
     import shutil as _sh
     found = _sh.which(name)
     if found:
@@ -222,13 +226,12 @@ def find_gmx(name: str = "gmx") -> str | None:
 
 
 def run_pdb2gmx(result: Result, args) -> int:
-    workdir = os.path.dirname(os.path.abspath(result.output_pdb))
-    # pdb2gmx ищет силовое поле в текущем каталоге - работаем оттуда
+    # pdb2gmx looks for the force field in the current directory - work there
     workdir = os.path.dirname(os.path.abspath(result.ff_dir))
     ffname = os.path.basename(result.ff_dir)[:-3]
     gmx = find_gmx(args.gmx)
     if gmx is None:
-        print(f"не нашёл исполняемый файл '{args.gmx}' (нужен source GMXRC)",
+        print(f"cannot find the executable '{args.gmx}' (source GMXRC first)",
               file=sys.stderr)
         return 3
     cmd = [
@@ -238,19 +241,18 @@ def run_pdb2gmx(result: Result, args) -> int:
         "-i", os.path.join(os.path.abspath(args.outdir), "posre.itp"),
         "-ff", ffname, "-water", args.water,
     ]
-    print(f"\n>>> {' '.join(cmd)}   (в каталоге {workdir})")
+    print(f"\n>>> {' '.join(cmd)}   (in {workdir})")
     proc = subprocess.run(cmd, cwd=workdir, capture_output=True, text=True)
     log = os.path.join(args.outdir, "pdb2gmx.log")
     with open(log, "w") as fh:
         fh.write(proc.stdout + "\n" + proc.stderr)
     if proc.returncode == 0:
-        print("pdb2gmx отработал успешно, топология собрана.")
+        print("pdb2gmx finished successfully, the topology is built.")
         for line in proc.stderr.splitlines():
             if "Total charge" in line or "charge" in line.lower():
                 print("  " + line.strip())
     else:
-        print(f"pdb2gmx завершился с ошибкой (код {proc.returncode}), "
-              f"подробности: {log}")
+        print(f"pdb2gmx failed (exit code {proc.returncode}), details in {log}")
         tail = (proc.stderr or proc.stdout).strip().splitlines()[-25:]
         for line in tail:
             print("  " + line)
@@ -279,14 +281,14 @@ def main(argv: List[str] | None = None) -> int:
             verbose=args.verbose,
         )
     except ForceFieldError as err:
-        print("\nОстанавливаюсь: силовое поле не содержит нужного, а править "
-              "его я не буду.\n", file=sys.stderr)
+        print("\nStopping: the force field lacks what is needed, and I will "
+              "not edit it.\n", file=sys.stderr)
         for problem in err.problems:
             print(f"  * {problem}", file=sys.stderr)
-        print("\nНичего не записано.", file=sys.stderr)
+        print("\nNothing was written.", file=sys.stderr)
         return 3
     except (SpecError, ValueError, FileNotFoundError) as err:
-        print(f"ошибка: {err}", file=sys.stderr)
+        print(f"error: {err}", file=sys.stderr)
         return 2
     write_report(result, spec, args.outdir)
     summarize(result, spec)

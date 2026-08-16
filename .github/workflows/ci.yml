@@ -20,20 +20,20 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      # силовое поле берём из GROMACS: пакет ставится за ~30 с и даёт
-      # /usr/share/gromacs/top/*.ff
-      - name: Установить GROMACS
+      # the force fields come from GROMACS: the package installs in ~30 s
+      # and provides /usr/share/gromacs/top/*.ff
+      - name: Install GROMACS
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq gromacs
 
-      - name: Установить protprep
+      - name: Install protprep
         run: python -m pip install --quiet ".[test]"
 
-      - name: Тесты
+      - name: Run tests
         run: python -m pytest -q
 
-      - name: Проверить CLI на примере
+      - name: Smoke-check the CLI on the example
         run: |
           protonate -f examples/fragment.pdb -o /tmp/demo --ph 7.0 \
               --ff amber99sb-ildn --fix A:31:p --fix A:63:HIE

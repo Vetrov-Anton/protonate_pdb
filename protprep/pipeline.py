@@ -1,4 +1,4 @@
-"""Основной конвейер: PDB без водородов -> PDB, готовый для pdb2gmx."""
+"""Main pipeline: a hydrogen-free PDB -> a PDB ready for pdb2gmx."""
 
 from __future__ import annotations
 
@@ -18,16 +18,16 @@ from .spec import (Spec, SpecError, TITRATABLE, normalize_residue_state)
 
 LOG = logging.getLogger("protprep")
 
-# внутренние состояния, которые pdb2pqr сам умеет выдавать
+# states pdb2pqr can produce on its own
 PDB2PQR_STATES = {"ASP", "ASH", "GLU", "GLH", "LYS", "LYN", "CYS", "CYM",
                   "CYX", "HID", "HIE", "HIP", "TYR", "ARG"}
 
-FORCED_PKA_HIGH = 1000.0    # pH < pKa -> протонированная форма
-FORCED_PKA_LOW = -1000.0    # pH >= pKa -> депротонированная форма
+FORCED_PKA_HIGH = 1000.0    # pH < pKa -> protonated form
+FORCED_PKA_LOW = -1000.0    # pH >= pKa -> deprotonated form
 
-# Стандартные (модельные) pKa свободных аминокислот - те же значения, которые
-# PROPKA использует как точку отсчёта. Нужны для режима --standard-pka, когда
-# расчёт локальных сдвигов не проводится вовсе.
+# Standard (model) pKa values of free amino acids - the same numbers PROPKA
+# uses as its reference. Needed for --standard-pka, where no local shifts are
+# computed at all.
 MODEL_PKA: Dict[str, float] = {
     "ASP": 3.80, "GLU": 4.50, "HIS": 6.50, "CYS": 9.00,
     "TYR": 10.00, "LYS": 10.50, "ARG": 12.50,
@@ -51,7 +51,7 @@ class ResidueReport:
 
 
 class ForceFieldError(RuntimeError):
-    """Силовому полю чего-то не хватает. Мы его не трогаем - просто отказ."""
+    """The force field lacks something. We do not touch it - we just refuse."""
 
     def __init__(self, problems: List[str]):
         self.problems = problems
@@ -70,7 +70,7 @@ class Result:
 
 # ---------------------------------------------------------------- pdb2pqr
 def _model_pka_rows(biomolecule) -> Tuple[List[dict], str]:
-    """Замена расчёту PROPKA: табличные (модельные) pKa для всех групп."""
+    """Stand-in for the PROPKA calculation: tabulated pKa for every group."""
     from collections import OrderedDict
 
     rows = []
@@ -93,7 +93,7 @@ def _model_pka_rows(biomolecule) -> Tuple[List[dict], str]:
                 coupled_group=None,
             )
         )
-    return rows, "PROPKA не запускался: взяты стандартные (модельные) pKa"
+    return rows, "PROPKA was not run: standard (model) pKa values were used"
 
 
 def run_pdb2pqr(
@@ -106,11 +106,11 @@ def run_pdb2pqr(
     log_level: str = "ERROR",
     standard_pka: bool = False,
 ) -> List[dict]:
-    """Запускает pdb2pqr, подменив pKa у зафиксированных остатков.
+    """Run pdb2pqr with the pKa values of the pinned residues overridden.
 
-    :param standard_pka: не запускать PROPKA, а взять табличные pKa - тогда
-        все незафиксированные группы (включая термини) получают состояние,
-        которое им положено при данном pH по стандартным значениям.
+    :param standard_pka: do not run PROPKA, use tabulated pKa instead - then
+        every unpinned group, termini included, ends up in the state the
+        standard values imply at this pH.
     """
     from pdb2pqr import biomolecule as pqr_biomolecule
     from pdb2pqr import main as pqr_main
@@ -150,9 +150,9 @@ def run_pdb2pqr(
     return pka_rows or []
 
 
-# ------------------------------------------------------------- сортировка
+# -------------------------------------------------------------- splitting
 def _split_input(atoms: Sequence[Atom], keep_water: bool, keep_het: bool):
-    """(остатки для pdb2pqr, прочее) с фильтром altloc."""
+    """(residues for pdb2pqr, everything else), filtering altlocs."""
     titratable_like, other = [], []
     for atom in atoms:
         if atom.altloc not in (" ", "", "A"):
@@ -162,7 +162,7 @@ def _split_input(atoms: Sequence[Atom], keep_water: bool, keep_het: bool):
             if atom.element.upper() == "H" or (
                 not atom.element and atom.name.lstrip("0123456789").startswith("H")
             ):
-                continue  # входные водороды выбрасываем, их поставит pdb2pqr
+                continue  # drop input hydrogens, pdb2pqr will place them
             titratable_like.append(atom)
         elif name in WATER:
             if keep_water:
@@ -193,13 +193,13 @@ def prepare(
     atoms, _header = parse_pdb(input_pdb)
     protein, other = _split_input(atoms, keep_water, keep_het)
     if not protein:
-        raise ValueError("В структуре не найдено ни одного стандартного остатка")
+        raise ValueError("No standard residue found in the structure")
 
     orig_names = {
         key: res[0].resname.upper() for key, res in group_residues(protein)
     }
 
-    # --- 1. чего хочет пользователь -------------------------------------
+    # --- 1. what the user asked for --------------------------------------
     targets: Dict[Tuple[str, int, str], str] = {}
     forced_pka: Dict[str, float] = {}
     for item in spec.residues:
@@ -212,17 +212,17 @@ def prepare(
             try:
                 if parent_family not in TITRATABLE:
                     raise SpecError(
-                        f"{key[0]}:{key[1]} - это {parent}, он не титруется"
+                        f"{key[0]}:{key[1]} is a {parent}, which is not titratable"
                     )
                 target = normalize_residue_state(parent_family, item.state)
             except SpecError:
                 if not wildcard:
                     raise
-                # цепь '*': в других цепях под этим номером может стоять
-                # что угодно - такие остатки просто пропускаем
+                # chain '*': other chains may hold anything at that number -
+                # such residues are simply skipped
                 warnings.append(
-                    f"{key[0]}:{key[1]} ({parent}) пропущен: состояние "
-                    f"'{item.state}' к нему неприменимо"
+                    f"{key[0]}:{key[1]} ({parent}) skipped: state "
+                    f"'{item.state}' does not apply to it"
                 )
                 continue
             matched += 1
@@ -234,11 +234,11 @@ def prepare(
                                    else FORCED_PKA_LOW)
         if wildcard and matched == 0:
             raise SpecError(
-                f"Остаток {item.resid}{item.icode}: ни в одной цепи состояние "
-                f"'{item.state}' неприменимо"
+                f"Residue {item.resid}{item.icode}: state '{item.state}' "
+                "does not apply in any chain"
             )
 
-    # --- 2. pdb2pqr + propka --------------------------------------------
+    # --- 2. pdb2pqr + propka ---------------------------------------------
     tmpdir = tempfile.mkdtemp(prefix="protprep_")
     try:
         stage_in = os.path.join(tmpdir, "input.pdb")
@@ -246,8 +246,8 @@ def prepare(
         write_pdb(stage_in, protein)
         standard = spec.pka_source == "standard"
         LOG.info(
-            "Запускаю pdb2pqr при pH %.2f (%s) ...", spec.ph,
-            "стандартные pKa" if standard else "локальные pKa из PROPKA",
+            "Running pdb2pqr at pH %.2f (%s) ...", spec.ph,
+            "standard pKa" if standard else "local pKa from PROPKA",
         )
         pka_rows = run_pdb2pqr(
             stage_in, stage_out, spec.ph, forced_pka, debump=debump, opt=opt,
@@ -265,7 +265,7 @@ def prepare(
         pka_map[(str(row["chain_id"]).strip(), int(row["res_num"]),
                  str(row.get("ins_code", "")).strip())] = row
 
-    # --- 3. доводка состояний руками ------------------------------------
+    # --- 3. finishing the states by hand ---------------------------------
     residues = group_residues(prot_atoms)
     reports: List[ResidueReport] = []
     cloud = chemistry.coords(prot_atoms)
@@ -278,13 +278,13 @@ def prepare(
         if target and target != current:
             res, notes = chemistry.set_state(list(res), target, cloud)
             for note in notes:
-                if note.startswith("НЕ добавлен"):
+                if note.startswith("FAILED"):
                     warnings.append(f"{key[0]}:{key[1]} {target}: {note}")
         elif target:
-            notes.append("состояние получено сразу из pdb2pqr")
+            notes.append("state came straight out of pdb2pqr")
         fixed_residues.append((key, list(res)))
         if current in WATER or orig_names.get(key, "") in WATER:
-            continue          # вода в отчёт о протонировании не идёт
+            continue          # water does not belong in the protonation report
         row = pka_map.get(key)
         reports.append(
             ResidueReport(
@@ -304,24 +304,25 @@ def prepare(
                       if (r.chain, r.resid, r.icode) == key), None)
         if final != target:
             warnings.append(
-                f"{key[0]}:{key[1]} запрошено {target}, получено {final}"
+                f"{key[0]}:{key[1]} asked for {target}, got {final}"
             )
 
-    # --- 4. термини ------------------------------------------------------
+    # --- 4. termini -------------------------------------------------------
     if spec.pka_source == "standard":
-        # в amber-порте оба конца существуют только в заряженном виде
+        # in the amber port both termini exist only in their charged form
         if spec.ph > MODEL_PKA_NTERM:
             warnings.append(
-                f"при pH {spec.ph:.2f} стандартный N-конец (pKa "
-                f"{MODEL_PKA_NTERM:.1f}) был бы нейтрален, но в силовом поле "
-                "нейтрального N-конца нет - остаётся NH3+ (или задайте "
-                "--nter ЦЕПЬ:ACE)"
+                f"at pH {spec.ph:.2f} a standard N-terminus (pKa "
+                f"{MODEL_PKA_NTERM:.1f}) would be neutral, but the force field "
+                "has no neutral N-terminus - it stays NH3+ (or use "
+                "--nter CHAIN:ACE)"
             )
         if spec.ph < MODEL_PKA_CTERM:
             warnings.append(
-                f"при pH {spec.ph:.2f} стандартный C-конец (pKa "
-                f"{MODEL_PKA_CTERM:.1f}) был бы протонирован, но в силовом поле "
-                "COOH-конца нет - остаётся COO- (или задайте --cter ЦЕПЬ:NME)"
+                f"at pH {spec.ph:.2f} a standard C-terminus (pKa "
+                f"{MODEL_PKA_CTERM:.1f}) would be protonated, but the force "
+                "field has no COOH terminus - it stays COO- (or use "
+                "--cter CHAIN:NME)"
             )
     chain_order: List[str] = []
     by_chain: Dict[str, List[int]] = {}
@@ -333,9 +334,9 @@ def prepare(
             chain_order.append(key[0])
 
     term_notes: List[str] = []
-    problems: List[str] = []                       # блокирующие проблемы
-    caps: Dict[int, Tuple[List[Atom], str]] = {}   # индекс -> (атомы кэпа, 'before'|'after')
-    positions: Dict[int, str] = {}                 # индекс -> nter/cter/middle
+    problems: List[str] = []                       # blocking problems
+    caps: Dict[int, Tuple[List[Atom], str]] = {}   # index -> (cap atoms, 'before'|'after')
+    positions: Dict[int, str] = {}                 # index -> nter/cter/middle
 
     for chain in chain_order:
         idxs = by_chain[chain]
@@ -346,7 +347,7 @@ def prepare(
         n_state = spec.terminus(chain, "N") or "NH3+"
         c_state = spec.terminus(chain, "C") or "COO-"
 
-        # --- N-конец
+        # --- N-terminus
         res = fixed_residues[first][1]
         if n_state == "ACE":
             cap, body, notes = chemistry.cap_nterm_ace(list(res), cloud)
@@ -354,33 +355,33 @@ def prepare(
                 fixed_residues[first] = (fixed_residues[first][0], body)
                 caps[first] = (cap, "before")
                 positions[first] = "middle"
-            term_notes += [f"цепь {chain}: {n}" for n in notes]
+            term_notes += [f"chain {chain}: {n}" for n in notes]
         elif n_state == "NH2":
             body = [a for a in res if a.name != "H3"]
             resname = body[0].resname.upper()
             new_name = termini_mod.check_neutral_block(ff, resname, "N")
             if new_name is None:
                 problems.append(
-                    f"цепь {chain}: нейтральный N-конец (NH2) для {resname} "
-                    f"невозможен - в силовом поле "
-                    f"{os.path.basename(ff.path)} нет блока "
-                    f"[ {termini_mod.neutral_nter_name(resname)} ]. "
-                    "Возьмите кэп (--nter "
-                    f"{chain}:ACE) либо добавьте такой блок в ff сами."
+                    f"chain {chain}: a neutral N-terminus (NH2) for {resname} "
+                    f"is impossible - force field "
+                    f"{os.path.basename(ff.path)} has no "
+                    f"[ {termini_mod.neutral_nter_name(resname)} ] block. "
+                    f"Use a cap (--nter {chain}:ACE) or add such a block to "
+                    "the force field yourself."
                 )
             else:
                 fixed_residues[first] = (
                     fixed_residues[first][0],
                     [replace(a, resname=new_name) for a in body],
                 )
-                positions[first] = "middle"   # блок ищем по имени напрямую
+                positions[first] = "middle"   # the block is found by name
                 term_notes.append(
-                    f"цепь {chain}: N-конец нейтральный (NH2, {new_name})"
+                    f"chain {chain}: neutral N-terminus (NH2, {new_name})"
                 )
         else:
-            term_notes.append(f"цепь {chain}: N-конец заряжен (NH3+)")
+            term_notes.append(f"chain {chain}: charged N-terminus (NH3+)")
 
-        # --- C-конец
+        # --- C-terminus
         res = fixed_residues[last][1]
         if c_state in ("NME", "NHE"):
             cap, body, notes = chemistry.cap_cterm(list(res), cloud, kind=c_state)
@@ -388,19 +389,19 @@ def prepare(
                 fixed_residues[last] = (fixed_residues[last][0], body)
                 caps[last] = (cap, "after")
                 positions[last] = "middle"
-            term_notes += [f"цепь {chain}: {n}" for n in notes]
+            term_notes += [f"chain {chain}: {n}" for n in notes]
         elif c_state == "COOH":
             body = list(res)
             resname = body[0].resname.upper()
             new_name = termini_mod.check_neutral_block(ff, resname, "C")
             if new_name is None:
                 problems.append(
-                    f"цепь {chain}: нейтральный C-конец (COOH) для {resname} "
-                    f"невозможен - в силовом поле "
-                    f"{os.path.basename(ff.path)} нет блока "
-                    f"[ {termini_mod.neutral_cter_name(resname)} ]. "
-                    f"Возьмите кэп (--cter {chain}:NME или {chain}:NHE) либо "
-                    "добавьте такой блок в ff сами."
+                    f"chain {chain}: a neutral C-terminus (COOH) for {resname} "
+                    f"is impossible - force field "
+                    f"{os.path.basename(ff.path)} has no "
+                    f"[ {termini_mod.neutral_cter_name(resname)} ] block. "
+                    f"Use a cap (--cter {chain}:NME or {chain}:NHE) or add "
+                    "such a block to the force field yourself."
                 )
             else:
                 names = {a.name for a in body}
@@ -416,12 +417,12 @@ def prepare(
                 )
                 positions[last] = "middle"
                 term_notes.append(
-                    f"цепь {chain}: C-конец нейтральный (COOH, {new_name})"
+                    f"chain {chain}: neutral C-terminus (COOH, {new_name})"
                 )
         else:
-            term_notes.append(f"цепь {chain}: C-конец заряжен (COO-)")
+            term_notes.append(f"chain {chain}: charged C-terminus (COO-)")
 
-    # --- 5. приведение имён атомов к номенклатуре силового поля ----------
+    # --- 5. matching atom names to the force field nomenclature ----------
     final_atoms: List[Atom] = []
     stripped_res = stripped_h = 0
     for idx, (key, res) in enumerate(fixed_residues):
@@ -429,8 +430,8 @@ def prepare(
             final_atoms.extend(caps[idx][0])
         resname = res[0].resname.upper()
         if resname in WATER:
-            # pdb2pqr выдаёт воду как WAT/OW/HW/HW (имена H совпадают);
-            # приводим к виду, который ждёт rtp: HOH / OW HW1 HW2
+            # pdb2pqr emits water as WAT/OW/HW/HW (both H share a name);
+            # bring it to what the rtp expects: HOH / OW HW1 HW2
             hcount = 0
             for atom in res:
                 if atom.element.upper() == "H":
@@ -449,8 +450,8 @@ def prepare(
         where = f"{key[0]}:{key[1]}{key[2]} {resname}"
         if block is None:
             problems.append(
-                f"{where}: в силовом поле {os.path.basename(ff.path)} нет "
-                f"блока rtp для этого остатка ({position})"
+                f"{where}: force field {os.path.basename(ff.path)} has no rtp "
+                f"block for this residue ({position})"
             )
             final_atoms.extend(res)
             continue
@@ -459,17 +460,17 @@ def prepare(
             flag = "--nter" if position == "nter" else "--cter"
             cap = "ACE" if position == "nter" else "NME"
             problems.append(
-                f"{where}: в силовом поле нет {end}-концевого блока для этого "
-                f"состояния (нашёлся только [ {block.name} ]). Варианты: "
-                f"закрыть конец кэпом ({flag} {key[0]}:{cap}) либо оставить "
-                f"остаток в стандартном состоянии."
+                f"{where}: the force field has no {end}-terminal block for "
+                f"this state (only [ {block.name} ] was found). Options: cap "
+                f"the terminus ({flag} {key[0]}:{cap}) or leave the residue in "
+                "its standard state."
             )
         parents = _hydrogen_parents(res)
         rename, extra, missing = ffdata.reconcile_residue(
             [a.name for a in res], parents, block
         )
-        # режим "водороды только у зафиксированных": у остальных остатков H
-        # снимаются, их достроит pdb2gmx по имени остатка из rtp
+        # "hydrogens only on pinned residues" mode: the rest lose their H,
+        # pdb2gmx will rebuild them from the rtp block named by the residue
         drop_h = spec.hydrogens == "fixed" and key not in targets
         for atom in res:
             if drop_h and atom.element.upper() == "H":
@@ -480,18 +481,18 @@ def prepare(
             stripped_res += 1
         if extra:
             problems.append(
-                f"{where} (блок {block.name}): атомам {', '.join(extra)} нет "
-                f"соответствия в rtp - pdb2gmx на них ругнётся"
+                f"{where} (block {block.name}): atoms {', '.join(extra)} have "
+                "no counterpart in the rtp - pdb2gmx will complain about them"
             )
         if missing:
             warnings.append(
-                f"{where} (блок {block.name}): нет атомов "
-                f"{', '.join(missing)} (pdb2gmx достроит водороды сам)"
+                f"{where} (block {block.name}): atoms {', '.join(missing)} are "
+                "absent (pdb2gmx will add the hydrogens itself)"
             )
         if idx in caps and caps[idx][1] == "after":
             final_atoms.extend(caps[idx][0])
 
-    # --- 6. проверки, после которых pdb2gmx точно споткнётся -------------
+    # --- 6. checks that pdb2gmx would otherwise trip over -----------------
     final_atoms.extend(other)
     used = {a.resname.upper() for a in final_atoms}
 
@@ -499,26 +500,26 @@ def prepare(
     unknown = sorted(n for n in used if known and n not in known)
     if unknown:
         problems.append(
-            "имена остатков " + ", ".join(unknown) + " отсутствуют в "
-            f"residuetypes.dat ({rt_path}) - GROMACS сочтёт их не белком и "
-            "разорвёт цепь. Либо не используйте эти состояния, либо добавьте "
-            "имена в residuetypes.dat вручную."
+            "residue names " + ", ".join(unknown) + " are absent from "
+            f"residuetypes.dat ({rt_path}) - GROMACS will treat them as "
+            "non-protein and break the chain. Either avoid these states or "
+            "add the names to residuetypes.dat by hand."
         )
 
     if spec.hydrogens == "fixed":
         term_notes.append(
-            f"водороды оставлены только у остатков из --fix и у кэпов; "
-            f"с {stripped_res} остальных остатков снято {stripped_h} H - "
-            "их достроит pdb2gmx (имена остатков, а значит и состояния, "
-            "сохранены)"
+            f"hydrogens kept only on the residues from --fix and on the caps; "
+            f"{stripped_h} H removed from the other {stripped_res} residues - "
+            "pdb2gmx will rebuild them (residue names, and therefore states, "
+            "are preserved)"
         )
 
     for block, delta, ref in ffdata.check_pair_charges(ff, used):
         problems.append(
-            f"блок [ {block} ] в силовом поле имеет нецелый заряд: он должен "
-            f"быть равен заряду {ref} минус 1, расхождение {delta:+.4f} e. "
-            "Это ошибка самого силового поля - исправьте её сами или не "
-            "используйте это состояние."
+            f"block [ {block} ] in the force field carries a non-integer "
+            f"charge: it must equal the charge of {ref} minus 1, discrepancy "
+            f"{delta:+.4f} e. This is a bug in the force field itself - fix it "
+            "yourself or do not use this state."
         )
 
     if problems:
@@ -527,8 +528,8 @@ def prepare(
     os.makedirs(outdir, exist_ok=True)
     out_path = os.path.join(outdir, output_name)
     title = [
-        "REMARK   1 Подготовлено protprep (pdb2pqr/propka + фиксированные состояния)",
-        f"REMARK   1 pH = {spec.ph:.2f}; силовое поле: {os.path.basename(ff.path)}",
+        "REMARK   1 Prepared by protprep (pdb2pqr/propka + fixed states)",
+        f"REMARK   1 pH = {spec.ph:.2f}; force field: {os.path.basename(ff.path)}",
     ]
     write_pdb(out_path, final_atoms, title)
 
@@ -541,26 +542,27 @@ def prepare(
 
 def _resolve_keys(item, orig_names: Dict[Tuple[str, int, str], str],
                   fname: str) -> List[Tuple[str, int, str]]:
-    """Ключи остатков, к которым относится строка задания.
+    """Residue keys a spec line refers to.
 
-    Цепь '*' (или пустая) означает "во всех цепях" - удобно для гомоолигомеров.
+    Chain '*' (or an empty chain) means "in every chain" - handy for
+    homo-oligomers.
     """
     exact = (item.chain, item.resid, item.icode)
     if item.chain not in ("", "*"):
         if exact not in orig_names:
             raise SpecError(
-                f"Остаток {item.chain}:{item.resid}{item.icode} не найден в {fname}"
+                f"Residue {item.chain}:{item.resid}{item.icode} not found in {fname}"
             )
         return [exact]
     keys = [k for k in orig_names
             if k[1] == item.resid and k[2] == item.icode]
     if not keys:
-        raise SpecError(f"Остаток {item.resid}{item.icode} не найден в {fname}")
+        raise SpecError(f"Residue {item.resid}{item.icode} not found in {fname}")
     return keys
 
 
 def _terminal_block_ok(block: ffdata.RtpEntry, position: str, resname: str) -> bool:
-    """Похож ли найденный блок на настоящий концевой (а не на внутренний)?"""
+    """Does the block we found look like a real terminal one (not an internal)?"""
     names = set(block.atom_names)
     if position == "nter":
         return "H1" in names and ("H2" in names or resname == "PRO")
@@ -570,7 +572,7 @@ def _terminal_block_ok(block: ffdata.RtpEntry, position: str, resname: str) -> b
 
 
 def _hydrogen_parents(res: Sequence[Atom]) -> Dict[str, str]:
-    """H -> ближайший тяжёлый атом того же остатка."""
+    """H -> nearest heavy atom of the same residue."""
     heavy = [a for a in res if a.element.upper() != "H"]
     if not heavy:
         return {}

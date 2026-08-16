@@ -1,21 +1,22 @@
-# Примеры
+# Examples
 
-* `fragment.pdb` — цепь A остатков 30–70 из 6CFO плюс кристаллические воды
-  (~15 КБ). Хватает, чтобы за секунду проверить, что всё работает.
-* `example_spec.txt` — файл задания для полного 6CFO (гомотетрамер): фиксация
-  боковых цепей в обеих альфа-субъединицах, кэпы на цепях A и C.
+* `fragment.pdb` — residues 30–70 of chain A from 6CFO plus the crystal waters
+  (~15 KB). Enough to check in a second that everything works.
+* `example_spec.txt` — a spec file for the full 6CFO homotetramer: pinned side
+  chains in both alpha subunits, caps on chains A and C.
 
-Быстрая проверка (силовое поле берётся из установленного GROMACS по имени):
+Quick check (the force field is taken from the installed GROMACS by name):
 
 ```bash
 protonate -f examples/fragment.pdb -o /tmp/prot_demo --ph 7.0 \
     --ff amber99sb-ildn --fix A:31:p --fix A:63:HIE
 ```
 
-Ожидаемо: Asp31 станет `ASH`, His63 — `HIE`, остальные группы — по PROPKA,
-концы цепи заряжены. С `--run-pdb2gmx` тут же соберётся и топология.
+Expected: Asp31 becomes `ASH`, His63 becomes `HIE`, all other groups follow
+PROPKA, and the chain termini stay charged. Add `--run-pdb2gmx` and the
+topology is built right away.
 
-Полный 6CFO (файл скачивается с RCSB, в репозиторий не входит):
+The full 6CFO (downloaded from RCSB, not part of the repository):
 
 ```bash
 wget https://files.rcsb.org/download/6CFO.pdb

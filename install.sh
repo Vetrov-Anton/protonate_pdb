@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Установка protprep. Ничего кроме собственного venv не трогает.
+# Install protprep. Touches nothing outside its own virtual environment.
 #
-#   ./install.sh            - venv рядом с исходниками (.venv) + команда protonate
-#   ./install.sh --pipx     - изолированная установка через pipx (команда в PATH)
-#   ./install.sh --user     - pip install --user (команда в ~/.local/bin)
+#   ./install.sh            - venv next to the sources (.venv) + protonate command
+#   ./install.sh --pipx     - isolated install via pipx (command on PATH)
+#   ./install.sh --user     - pip install --user (command in ~/.local/bin)
 #
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -11,25 +11,25 @@ mode="${1:---venv}"
 
 case "$mode" in
   --pipx)
-    command -v pipx >/dev/null || { echo "pipx не найден: python3 -m pip install --user pipx"; exit 1; }
+    command -v pipx >/dev/null || { echo "pipx not found: python3 -m pip install --user pipx"; exit 1; }
     pipx install --force "$here"
     echo
-    echo "Готово. Команда: protonate --help"
+    echo "Done. Command: protonate --help"
     ;;
   --user)
     python3 -m pip install --user "$here"
     echo
-    echo "Готово. Команда: protonate --help (нужен ~/.local/bin в PATH)"
+    echo "Done. Command: protonate --help (needs ~/.local/bin on PATH)"
     ;;
   --venv|"")
     python3 -m venv "$here/.venv"
     "$here/.venv/bin/pip" install --quiet --upgrade pip
-    # editable: правки в исходниках сразу видны обеим точкам входа
+    # editable: source edits are picked up by both entry points
     "$here/.venv/bin/pip" install --quiet -e "$here"
     echo
-    echo "Готово. Команда: $here/protonate --help"
-    echo "(или source $here/.venv/bin/activate && protonate --help)"
+    echo "Done. Command: $here/protonate --help"
+    echo "(or source $here/.venv/bin/activate && protonate --help)"
     ;;
   *)
-    echo "Неизвестный режим: $mode"; exit 2 ;;
+    echo "Unknown mode: $mode"; exit 2 ;;
 esac

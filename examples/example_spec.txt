@@ -1,33 +1,33 @@
-# Пример задания для protonate (6CFO: гомотетрамер A/B + C/D)
+# Example spec for protonate (6CFO: a homotetramer, chains A/B + C/D)
 #
-#   pH <значение>
-#   hydrogens all | fixed          fixed = ставить H только остаткам ниже,
-#                                  остальные достроит pdb2gmx
-#   pka propka | standard          standard = не считать PROPKA, взять
-#                                  стандартные pKa (то же, что --standard-pka)
-#   <цепь> <номер> <состояние>     цепь '*' = во всех цепях сразу
-#   nter <цепь> <состояние>        N-конец: NH3+ | NH2 | ACE
-#   cter <цепь> <состояние>        C-конец: COO- | COOH | NME | NHE
+#   pH <value>
+#   hydrogens all | fixed          fixed = place H only on the residues below,
+#                                  pdb2gmx builds the rest
+#   pka propka | standard          standard = skip PROPKA and use the standard
+#                                  pKa values (same as --standard-pka)
+#   <chain> <number> <state>       chain '*' = in every chain at once
+#   nter <chain> <state>           N-terminus: NH3+ | NH2 | ACE
+#   cter <chain> <state>           C-terminus: COO- | COOH | NME | NHE
 #
-# состояния: p / d / n / c  (protonated / deprotonated / neutral / charged)
-#            либо прямо имя: ASP|ASH, GLU|GLH, LYS|LYN, CYS|CYM|CYX,
-#            TYR|TYN, ARG|ARN, HID|HIE|HIP
+# states: p / d / n / c  (protonated / deprotonated / neutral / charged)
+#         or an explicit name: ASP|ASH, GLU|GLH, LYS|LYN, CYS|CYM|CYX,
+#         TYR|TYN, ARG|ARN, HID|HIE|HIP
 
 pH 7.4
 
-# Asp167 (координирует Mg2+ вместе с TDP) держим протонированным.
-# В цепях B/D под номером 167 стоит VAL - такие остатки пропускаются с
-# предупреждением, так что '*' здесь означает "в обеих альфа-субъединицах".
+# Asp167 (it coordinates Mg2+ together with TDP) is kept protonated.
+# In chains B/D residue 167 is a VAL - those are skipped with a warning,
+# so '*' here effectively means "in both alpha subunits".
 *  167  p
 
-# His63 - одинаковый тавтомер в A и C (сама PROPKA симметрию не гарантирует)
+# His63 - the same tautomer in A and C (PROPKA does not guarantee symmetry)
 *  63   HIE
 
-# Lys99 в бета-субъединицах: PROPKA даёт pKa ~7.3, фиксируем нейтральным
+# Lys99 in the beta subunits: PROPKA gives pKa ~7.3, pin it as neutral
 B  99   d
 D  99   d
 
-# концы цепей: A/C закрываем кэпами, B/D оставляем заряженными
+# chain termini: cap A and C, leave B and D charged
 nter A ACE
 cter A NME
 nter C ACE

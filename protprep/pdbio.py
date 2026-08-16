@@ -1,7 +1,7 @@
-"""Минимальный ввод/вывод PDB без внешних зависимостей.
+"""Minimal PDB input/output with no external dependencies.
 
-Работаем на уровне записей ATOM/HETATM: этого достаточно, потому что вся
-"химия" делается pdb2pqr, а нам нужно только резать/склеивать/переименовывать.
+We work at the level of ATOM/HETATM records: that is enough, because all the
+"chemistry" is done by pdb2pqr and we only need to slice, splice and rename.
 """
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Iterable, List, Tuple
 
-# 20 стандартных + все протонированные варианты, которые умеет отдавать pdb2pqr
+# the 20 standard residues plus every protonated variant pdb2pqr can emit
 STANDARD_AA = {
     "ALA", "ARG", "ASN", "ASP", "CYS", "GLN", "GLU", "GLY", "HIS", "ILE",
     "LEU", "LYS", "MET", "PHE", "PRO", "SER", "THR", "TRP", "TYR", "VAL",
@@ -24,7 +24,7 @@ WATER = {"HOH", "WAT", "SOL", "TIP3", "DOD"}
 class Atom:
     record: str          # ATOM / HETATM
     serial: int
-    name: str            # имя атома (без выравнивания)
+    name: str            # atom name (unpadded)
     altloc: str
     resname: str
     chain: str
@@ -38,7 +38,7 @@ class Atom:
     element: str
     charge: str = ""
 
-    # --- удобные производные ---
+    # --- convenience accessors ---
     @property
     def res_key(self) -> Tuple[str, int, str]:
         return (self.chain, self.resseq, self.icode)
@@ -54,12 +54,12 @@ class Atom:
 
 
 def _fmt_name(name: str, element: str) -> str:
-    """Раскладка имени атома по колонкам 13-16 согласно правилам PDB."""
+    """Lay out the atom name in columns 13-16 following the PDB rules."""
     name = name.strip()
     if len(name) >= 4:
         return name[:4]
     el = (element or "").strip()
-    # Однобуквенный элемент -> имя сдвинуто на одну позицию вправо
+    # single-letter element -> the name is shifted one position to the right
     if len(el) == 1 and len(name) < 4:
         return f" {name:<3}"
     if not el and not name[0].isdigit() and len(name) < 4:
@@ -68,7 +68,7 @@ def _fmt_name(name: str, element: str) -> str:
 
 
 def parse_pdb(path: str) -> Tuple[List[Atom], List[str]]:
-    """Возвращает (атомы, прочие строки заголовка)."""
+    """Return (atoms, remaining header lines)."""
     atoms: List[Atom] = []
     header: List[str] = []
     for line in open(path, "r", errors="replace"):
@@ -94,8 +94,8 @@ def parse_pdb(path: str) -> Tuple[List[Atom], List[str]]:
                         charge=line[78:80].strip(),
                     )
                 )
-            except ValueError as err:  # битая строка - лучше упасть громко
-                raise ValueError(f"Не могу разобрать строку PDB:\n{line}\n{err}")
+            except ValueError as err:  # a broken line is worth failing loudly
+                raise ValueError(f"Cannot parse PDB line:\n{line}\n{err}")
         elif rec in ("HEADER", "TITLE", "CRYST1", "SSBOND", "LINK", "REMARK"):
             header.append(line.rstrip("\n"))
     return atoms, header
@@ -156,7 +156,7 @@ def write_pdb(path: str, atoms: Iterable[Atom], title: Iterable[str] = (),
 
 
 def group_residues(atoms: Iterable[Atom]) -> List[Tuple[Tuple[str, int, str], List[Atom]]]:
-    """Группировка по остаткам с сохранением исходного порядка."""
+    """Group atoms by residue, preserving file order."""
     out: List[Tuple[Tuple[str, int, str], List[Atom]]] = []
     for atom in atoms:
         if out and out[-1][0] == atom.res_key:
