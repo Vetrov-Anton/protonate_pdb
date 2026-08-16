@@ -70,6 +70,29 @@ def test_caps_are_built(tmp_path):
     assert "ACE" in names and "NME" in names
 
 
+def test_only_fixed_hydrogens(tmp_path):
+    """Водороды остаются только у остатков из --fix; состояния сохраняются."""
+    spec = Spec(ph=7.0, pka_source="standard", hydrogens="fixed")
+    spec.residues = [ResidueSpec("A", 31, "", "p"), ResidueSpec("A", 63, "", "HID")]
+    result = prepare(FRAGMENT, spec, _ff(), str(tmp_path))
+
+    per_residue = {}
+    for line in open(result.output_pdb):
+        if not line.startswith("ATOM"):
+            continue
+        key = (line[21], int(line[22:26]))
+        is_h = line[76:78].strip() == "H"
+        counts = per_residue.setdefault(key, [0, line[17:20].strip()])
+        counts[0] += int(is_h)
+
+    assert per_residue[("A", 31)][0] > 0 and per_residue[("A", 31)][1] == "ASH"
+    assert per_residue[("A", 63)][0] > 0 and per_residue[("A", 63)][1] == "HID"
+    bare = [k for k, (n_h, _) in per_residue.items() if n_h == 0]
+    assert len(bare) == len(per_residue) - 2
+    # имена остатков (то есть состояния) остаются на месте
+    assert all(name for _, (_, name) in per_residue.items())
+
+
 def _ff_fingerprint(path):
     out = {}
     for root, _dirs, files in os.walk(path):

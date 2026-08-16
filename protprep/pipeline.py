@@ -423,6 +423,7 @@ def prepare(
 
     # --- 5. приведение имён атомов к номенклатуре силового поля ----------
     final_atoms: List[Atom] = []
+    stripped_res = stripped_h = 0
     for idx, (key, res) in enumerate(fixed_residues):
         if idx in caps and caps[idx][1] == "before":
             final_atoms.extend(caps[idx][0])
@@ -467,8 +468,16 @@ def prepare(
         rename, extra, missing = ffdata.reconcile_residue(
             [a.name for a in res], parents, block
         )
+        # режим "водороды только у зафиксированных": у остальных остатков H
+        # снимаются, их достроит pdb2gmx по имени остатка из rtp
+        drop_h = spec.hydrogens == "fixed" and key not in targets
         for atom in res:
+            if drop_h and atom.element.upper() == "H":
+                stripped_h += 1
+                continue
             final_atoms.append(replace(atom, name=rename.get(atom.name, atom.name)))
+        if drop_h:
+            stripped_res += 1
         if extra:
             problems.append(
                 f"{where} (блок {block.name}): атомам {', '.join(extra)} нет "
@@ -494,6 +503,14 @@ def prepare(
             f"residuetypes.dat ({rt_path}) - GROMACS сочтёт их не белком и "
             "разорвёт цепь. Либо не используйте эти состояния, либо добавьте "
             "имена в residuetypes.dat вручную."
+        )
+
+    if spec.hydrogens == "fixed":
+        term_notes.append(
+            f"водороды оставлены только у остатков из --fix и у кэпов; "
+            f"с {stripped_res} остальных остатков снято {stripped_h} H - "
+            "их достроит pdb2gmx (имена остатков, а значит и состояния, "
+            "сохранены)"
         )
 
     for block, delta, ref in ffdata.check_pair_charges(ff, used):

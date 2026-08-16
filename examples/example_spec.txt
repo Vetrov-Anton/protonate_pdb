@@ -1,6 +1,8 @@
 # Пример задания для protonate (6CFO: гомотетрамер A/B + C/D)
 #
 #   pH <значение>
+#   hydrogens all | fixed          fixed = ставить H только остаткам ниже,
+#                                  остальные достроит pdb2gmx
 #   pka propka | standard          standard = не считать PROPKA, взять
 #                                  стандартные pKa (то же, что --standard-pka)
 #   <цепь> <номер> <состояние>     цепь '*' = во всех цепях сразу

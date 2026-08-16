@@ -35,11 +35,18 @@ EPILOG = """
   *  63 HIE             # во всех цепях сразу
   nter A ACE
   cter A NME
+  pka standard          # не считать PROPKA
+  hydrogens fixed       # H только у остатков из --fix
 
 источник pKa:
   по умолчанию - PROPKA (локальные сдвиги). С --standard-pka PROPKA не
   запускается вовсе: все незафиксированные группы, включая N- и C-концы,
   берутся по стандартным pKa свободных аминокислот при заданном pH.
+
+водороды:
+  по умолчанию протонируется вся структура. С --only-fixed-h водороды остаются
+  только у остатков из --fix (и у кэпов), остальные уезжают без водородов -
+  их достроит gmx pdb2gmx. Имена остатков, а значит и состояния, сохраняются.
 
 состояния:
   p = protonated, d = deprotonated, n = neutral, c = charged
@@ -70,6 +77,11 @@ def build_parser() -> argparse.ArgumentParser:
                    help="не запускать PROPKA: все незафиксированные группы, "
                         "включая N- и C-концы, берутся в состоянии по "
                         "стандартным (табличным) pKa при заданном pH")
+    p.add_argument("--only-fixed-h", "--strip-other-h", dest="only_fixed_h",
+                   action="store_true",
+                   help="поставить водороды только остаткам из --fix (и кэпам), "
+                        "все прочие оставить без водородов - их достроит "
+                        "gmx pdb2gmx сам")
     p.add_argument("--ff", default="amber-99sb-ildn.ff",
                    help="каталог силового поля GROMACS (*.ff)")
     p.add_argument("--spec", help="файл задания (txt или json)")
@@ -99,6 +111,8 @@ def build_spec(args) -> Spec:
         spec.ph = args.ph
     if args.standard_pka:
         spec.pka_source = "standard"
+    if args.only_fixed_h:
+        spec.hydrogens = "fixed"
     for token in args.fix:
         chain, resid, icode, state = parse_fix_token(token)
         spec.residues.append(ResidueSpec(chain, resid, icode, state, state))
@@ -138,6 +152,7 @@ def write_report(result: Result, spec: Spec, outdir: str) -> None:
             {
                 "ph": spec.ph,
                 "pka_source": spec.pka_source,
+                "hydrogens": spec.hydrogens,
                 "output_pdb": result.output_pdb,
                 "force_field": result.ff_dir,
                 "pdb2gmx": result.pdb2gmx_cmd,

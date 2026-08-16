@@ -103,6 +103,9 @@ class Spec:
     ph: float = 7.0
     # 'propka' - считать локальные сдвиги pKa; 'standard' - взять табличные
     pka_source: str = "propka"
+    # 'all' - протонировать всё; 'fixed' - только остатки из --fix, остальные
+    # уходят без водородов (их достроит pdb2gmx)
+    hydrogens: str = "all"
     residues: List[ResidueSpec] = field(default_factory=list)
     termini: List[TerminusSpec] = field(default_factory=list)
 
@@ -158,6 +161,18 @@ def parse_terminus_token(end: str, value: str) -> str:
     return table[key]
 
 
+def parse_hydrogens(value: str) -> str:
+    """'all' | 'fixed' (синонимы: only-fixed, fix, selected)."""
+    key = value.strip().lower()
+    if key in ("all", "full", "everything", "yes"):
+        return "all"
+    if key in ("fixed", "fix", "only-fixed", "only_fixed", "selected"):
+        return "fixed"
+    raise SpecError(
+        f"Неизвестный режим водородов: '{value}'. Доступно: all | fixed"
+    )
+
+
 def parse_pka_source(value: str) -> str:
     """'propka' | 'standard' (синонимы: model, table, none, no)."""
     key = value.strip().lower()
@@ -195,8 +210,11 @@ def load_spec(path: str) -> Spec:
 
 def _load_json(text: str) -> Spec:
     data = json.loads(text)
-    spec = Spec(ph=float(data.get("ph", 7.0)),
-                pka_source=parse_pka_source(str(data.get("pka", "propka"))))
+    spec = Spec(
+        ph=float(data.get("ph", 7.0)),
+        pka_source=parse_pka_source(str(data.get("pka", "propka"))),
+        hydrogens=parse_hydrogens(str(data.get("hydrogens", "all"))),
+    )
     for item in data.get("residues", []):
         spec.residues.append(
             ResidueSpec(
@@ -232,6 +250,8 @@ def _load_text(text: str) -> Spec:
                 spec.ph = float(parts[1])
             elif head == "pka":
                 spec.pka_source = parse_pka_source(parts[1])
+            elif head in ("hydrogens", "h"):
+                spec.hydrogens = parse_hydrogens(parts[1])
             elif head in ("nter", "n-term", "nterm", "cter", "c-term", "cterm"):
                 end = "N" if head.startswith("n") else "C"
                 chain = parts[1] if len(parts) == 3 else "*"
