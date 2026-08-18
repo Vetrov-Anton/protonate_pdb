@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import argparse
-import json
 import logging
-import os
-import subprocess
 import sys
 from typing import List
 
+from . import report as report_mod
 from .pipeline import ForceFieldError, Result, prepare
 from .spec import (Spec, SpecError, TerminusSpec, ResidueSpec, load_spec,
                    parse_fix_token, parse_terminus_token)
@@ -134,129 +132,33 @@ def build_spec(args) -> Spec:
 
 
 def write_report(result: Result, spec: Spec, outdir: str) -> None:
-    tsv = os.path.join(outdir, "protonation_report.tsv")
-    with open(tsv, "w") as fh:
-        fh.write("chain\tresid\ticode\tinput\tfinal\tpKa\tmodel_pKa\tburied\t"
-                 "fixed\tnotes\n")
-        for r in result.residues:
-            if r.pka is None and not r.forced and r.original == r.final:
-                continue
-            pka = f"{r.pka:.2f}" if r.pka is not None else ""
-            mpka = f"{r.model_pka:.2f}" if r.model_pka is not None else ""
-            bur = f"{r.buried:.2f}" if isinstance(r.buried, (int, float)) else ""
-            fh.write(
-                f"{r.chain}\t{r.resid}\t{r.icode}\t{r.original}\t{r.final}\t"
-                f"{pka}\t{mpka}\t{bur}\t{'yes' if r.forced else ''}\t"
-                f"{'; '.join(r.notes)}\n"
-            )
-
-    js = os.path.join(outdir, "protonation_report.json")
-    with open(js, "w") as fh:
-        json.dump(
-            {
-                "ph": spec.ph,
-                "pka_source": spec.pka_source,
-                "hydrogens": spec.hydrogens,
-                "output_pdb": result.output_pdb,
-                "force_field": result.ff_dir,
-                "pdb2gmx": result.pdb2gmx_cmd,
-                "termini": result.termini,
-                "warnings": result.warnings,
-                "residues": [
-                    {
-                        "chain": r.chain, "resid": r.resid, "icode": r.icode,
-                        "input": r.original, "final": r.final, "pKa": r.pka,
-                        "model_pKa": r.model_pka, "buried": r.buried,
-                        "fixed": r.forced, "notes": r.notes,
-                    }
-                    for r in result.residues
-                ],
-            },
-            fh, ensure_ascii=False, indent=1,
-        )
+    report_mod.write_reports(result, outdir, spec)
 
 
 def summarize(result: Result, spec: Spec) -> None:
-    changed = [r for r in result.residues if r.original != r.final]
-    forced = [r for r in result.residues if r.forced]
-    source = ("standard pKa (PROPKA was not run)"
-              if spec.pka_source == "standard" else "local pKa from PROPKA")
-    print(f"\npH = {spec.ph:.2f}; {source}")
-    print(f"structure: {result.output_pdb}")
-    print(f"residues with a shifted state: {len(changed)} "
-          f"(pinned by hand: {len(forced)})")
-    if changed:
-        label = "pKa(table)" if spec.pka_source == "standard" else "pKa(PROPKA)"
-        print(f"\n  chain residue    was -> now   {label}  source")
-        for r in changed:
-            pka = f"{r.pka:8.2f}" if r.pka is not None else "       -"
-            src = ("PINNED" if r.forced
-                   else ("table" if spec.pka_source == "standard" else "propka"))
-            print(f"  {r.chain:>5} {r.resid:>7}   {r.original:>4} -> {r.final:<5} "
-                  f"{pka}   {src}")
-    missing_forced = [r for r in forced if r.original == r.final]
-    if missing_forced:
-        print("\n  pinned, state already matched the input name:")
-        for r in missing_forced:
-            print(f"  {r.chain}:{r.resid} {r.final}")
-    if result.termini:
-        print("\nchain termini:")
-        for note in result.termini:
-            print(f"  {note}")
-    if result.warnings:
-        print("\nwarnings:")
-        for w in result.warnings:
-            print(f"  ! {w}")
-    print(f"\nnext:\n  {result.pdb2gmx_cmd}\n")
-
-
-def find_gmx(name: str = "gmx") -> str | None:
-    """gmx is often not on PATH (GMXRC needed) - look in the usual places."""
-    import shutil as _sh
-    found = _sh.which(name)
-    if found:
-        return found
-    for cand in (
-        "/usr/local/gromacs/bin/gmx", "/usr/local/gromacs/bin/gmx_mpi",
-        "/usr/bin/gmx", "/opt/gromacs/bin/gmx",
-    ):
-        if os.path.exists(cand):
-            return cand
-    return None
+    print()
+    print(result.summary())
+    print()
 
 
 def run_pdb2gmx(result: Result, args) -> int:
-    # pdb2gmx looks for the force field in the current directory - work there
-    workdir = os.path.dirname(os.path.abspath(result.ff_dir))
-    ffname = os.path.basename(result.ff_dir)[:-3]
-    gmx = find_gmx(args.gmx)
-    if gmx is None:
-        print(f"cannot find the executable '{args.gmx}' (source GMXRC first)",
-              file=sys.stderr)
+    try:
+        run = result.run_pdb2gmx(outdir=args.outdir, water=args.water,
+                                 gmx=args.gmx)
+    except FileNotFoundError as err:
+        print(str(err), file=sys.stderr)
         return 3
-    cmd = [
-        gmx, "pdb2gmx", "-f", os.path.abspath(result.output_pdb),
-        "-o", os.path.join(os.path.abspath(args.outdir), "conf.gro"),
-        "-p", os.path.join(os.path.abspath(args.outdir), "topol.top"),
-        "-i", os.path.join(os.path.abspath(args.outdir), "posre.itp"),
-        "-ff", ffname, "-water", args.water,
-    ]
-    print(f"\n>>> {' '.join(cmd)}   (in {workdir})")
-    proc = subprocess.run(cmd, cwd=workdir, capture_output=True, text=True)
-    log = os.path.join(args.outdir, "pdb2gmx.log")
-    with open(log, "w") as fh:
-        fh.write(proc.stdout + "\n" + proc.stderr)
-    if proc.returncode == 0:
+    print(f"\n>>> {' '.join(run.command)}   (in {run.workdir})")
+    if run.ok:
         print("pdb2gmx finished successfully, the topology is built.")
-        for line in proc.stderr.splitlines():
-            if "Total charge" in line or "charge" in line.lower():
-                print("  " + line.strip())
-    else:
-        print(f"pdb2gmx failed (exit code {proc.returncode}), details in {log}")
-        tail = (proc.stderr or proc.stdout).strip().splitlines()[-25:]
-        for line in tail:
+        for line in run.charge_lines():
             print("  " + line)
-    return proc.returncode
+    else:
+        print(f"pdb2gmx failed (exit code {run.returncode}), "
+              f"details in {run.log_path}")
+        for line in run.tail():
+            print("  " + line)
+    return run.returncode
 
 
 def main(argv: List[str] | None = None) -> int:

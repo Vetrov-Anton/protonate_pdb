@@ -8,6 +8,10 @@ are set **by hand** — something neither PROPKA nor PDB2PQR lets you do.
 On top of that it does what PDB2PQR refuses to do for AMBER: histidine
 tautomers, deprotonated TYR/ARG, and ACE/NME/NHE caps.
 
+Usable both as a command line tool and as a Python class — see
+[Python API](#python-api) and the walkthrough notebook
+[`examples/protprep_demo.ipynb`](examples/protprep_demo.ipynb).
+
 > **The force field is opened read-only.** The tool never writes or copies
 > anything into a `*.ff` directory and never touches `residuetypes.dat`. If a
 > required block is missing, it stops with an explanation and writes nothing.
@@ -38,6 +42,7 @@ cd protonate_pdb
 ./install.sh --pipx   # isolated, via pipx
 ./install.sh --user   # pip install --user
 python -m pytest -q   # tests (need an installed GROMACS)
+jupyter lab examples/protprep_demo.ipynb   # the walkthrough notebook
 ```
 
 The `./protonate` script also works with no installation at all: it picks up a
@@ -74,6 +79,82 @@ current directory, and the installed GROMACS (`$GMXDATA/top`,
 `/usr/local/gromacs/...`). So `--ff amber99sb-ildn` works from anywhere, while
 `--ff ./my-custom.ff` picks up your own. If nothing matches, the tool prints the
 list of force fields it can see.
+
+<a id="python-api"></a>
+## Python API
+
+The same pipeline, driven from code. Configuration methods return the object
+itself, so calls chain; the work happens in `.run()`.
+
+```python
+from protprep import Protonator
+
+result = (
+    Protonator("6CFO.pdb", ff="amber99sb-ildn", ph=7.4)
+    .fix("A", 167, "p")          # ASP -> ASH
+    .fix("*", 63, "HIE")         # the same tautomer in every chain
+    .cap("A", n="ACE", c="NME")  # cap both ends of chain A
+    .run("prepared")
+)
+
+print(result.summary())
+print(result.states[("A", 167)])        # 'ASH'
+topology = result.run_pdb2gmx()         # builds conf.gro / topol.top
+print(topology.ok, topology.total_charge)
+```
+
+Every CLI flag has a counterpart:
+
+| CLI | Python |
+|-----|--------|
+| `--fix A:145:p` | `.fix("A", 145, "p")` or `.fix("A:145:p")` |
+| several `--fix` | `.fix_many(["A:145:p", ("A", 63, "HIE")])` |
+| `--nter A:ACE` / `--cter A:NME` | `.nter("A", "ACE")` / `.cter("A", "NME")` |
+| both at once | `.cap("A", n="ACE", c="NME")` |
+| `--standard-pka` | `.standard_pka()` |
+| `--only-fixed-h` | `.only_fixed_hydrogens()` |
+| `--ph 7.4` | `Protonator(..., ph=7.4)` or `.at_ph(7.4)` |
+| `--spec spec.txt` | `Protonator.from_spec_file(pdb, "spec.txt")` |
+| `--drop-water` / `--drop-het` | `Protonator(..., keep_water=False, keep_het=False)` |
+
+What `run()` gives back:
+
+```python
+result.output_pdb          # path to the structure
+result.states              # {("A", 167): "ASH", ...}
+result.changed()           # residues whose state moved
+result.fixed()             # residues you pinned
+result.records()           # the report as plain dicts
+result.to_dataframe()      # ... or as a pandas DataFrame
+result.warnings            # non-fatal remarks
+result.termini             # what happened at the chain ends
+result.summary()           # the text overview the CLI prints
+result.save_reports(dir)   # write the TSV/JSON reports
+result.run_pdb2gmx()       # -> Pdb2gmxResult(ok, total_charge, gro, top, log_path)
+```
+
+If the force field lacks a required block, `run()` raises `ForceFieldError`
+with the reasons in `err.problems` and writes nothing:
+
+```python
+from protprep import ForceFieldError
+
+try:
+    Protonator("6CFO.pdb").fix("A", 35, "d").run("prepared")   # TYR -> TYN
+except ForceFieldError as err:
+    for problem in err.problems:
+        print(problem)
+```
+
+For a single call there is a shortcut:
+
+```python
+from protprep import protonate
+
+result = protonate("6CFO.pdb", "prepared",
+                   fix=["A:167:p", ("A", 63, "HIE")],
+                   nter=[("A", "ACE")], ph=7.4, pka="standard")
+```
 
 ## Pinning states
 
@@ -229,9 +310,10 @@ does not change).
 * **Disulfides** are still detected by pdb2gmx (by distance). To pin one, set
   `CYX` explicitly.
 * **Ligands.** `A5X`, `MG` and other HETATM records are carried over as they
-  are, without hydrogens: they need their own rtp/hdb entries (your force field
-  already ships `TPP.rtp`, `API.rtp`, `unl_GMX.rtp` — the tool does not check
-  whether they suffice).
+  are, without hydrogens: they need their own rtp/hdb entries and a line in
+  `residuetypes.dat`. If a ligand name is unknown to GROMACS you get a warning
+  (not an error) — drop them with `--drop-het` / `keep_het=False` if you handle
+  them separately.
 * **PROPKA is not symmetric.** On the 6CFO homotetramer chains B and D come out
   with different states (B206 → HIE, D206 → HID, for instance). If you need
   symmetry, pin those residues explicitly with `*`.

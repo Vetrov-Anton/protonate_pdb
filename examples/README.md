@@ -2,6 +2,9 @@
 
 * `fragment.pdb` — residues 30–70 of chain A from 6CFO plus the crystal waters
   (~15 KB). Enough to check in a second that everything works.
+* `protprep_demo.ipynb` — a notebook walking through the Python API: pinning
+  states, reading the report, standard pKa, hydrogens only on pinned residues,
+  caps, building the topology, and what an unsupported state looks like.
 * `example_spec.txt` — a spec file for the full 6CFO homotetramer: pinned side
   chains in both alpha subunits, caps on chains A and C.
 

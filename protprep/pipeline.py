@@ -60,12 +60,114 @@ class ForceFieldError(RuntimeError):
 
 @dataclass
 class Result:
+    """Everything a run produced: the structure, the per-residue report and
+    the ready-made pdb2gmx command."""
+
     output_pdb: str
     residues: List[ResidueReport]
     termini: List[str]
     warnings: List[str]
     ff_dir: str
     pdb2gmx_cmd: str
+    spec: Optional[Spec] = None
+
+    # ------------------------------------------------------------ queries
+    @property
+    def states(self) -> Dict[Tuple[str, int], str]:
+        """{(chain, resid): final residue name} for every titratable residue."""
+        return {(r.chain, r.resid): r.final for r in self.residues}
+
+    def changed(self) -> List[ResidueReport]:
+        """Residues whose state differs from the input file."""
+        return [r for r in self.residues if r.original != r.final]
+
+    def fixed(self) -> List[ResidueReport]:
+        """Residues whose state was pinned by the user."""
+        return [r for r in self.residues if r.forced]
+
+    def records(self) -> List[dict]:
+        """The report as plain dicts (handy for json/pandas)."""
+        return [
+            {
+                "chain": r.chain, "resid": r.resid, "icode": r.icode,
+                "input": r.original, "final": r.final, "pKa": r.pka,
+                "model_pKa": r.model_pka, "buried": r.buried,
+                "fixed": r.forced, "notes": r.notes,
+            }
+            for r in self.residues
+        ]
+
+    def to_dataframe(self, only_changed: bool = False):
+        """pandas.DataFrame with the report (pandas must be installed)."""
+        import pandas as pd
+
+        rows = self.records()
+        if only_changed:
+            rows = [r for r in rows if r["input"] != r["final"]]
+        return pd.DataFrame(rows)
+
+    # ------------------------------------------------------------ actions
+    def save_reports(self, outdir: Optional[str] = None) -> List[str]:
+        """Write protonation_report.tsv / .json next to the structure."""
+        from . import report as report_mod
+
+        outdir = outdir or os.path.dirname(os.path.abspath(self.output_pdb))
+        return report_mod.write_reports(self, outdir, self.spec)
+
+    def run_pdb2gmx(self, outdir: Optional[str] = None, water: str = "tip3p",
+                    gmx: str = "gmx", extra_args: Optional[List[str]] = None):
+        """Build the topology with gmx pdb2gmx. Returns a Pdb2gmxResult."""
+        from . import gmx as gmx_mod
+
+        outdir = outdir or os.path.dirname(os.path.abspath(self.output_pdb))
+        return gmx_mod.run_pdb2gmx(
+            self.output_pdb, self.ff_dir, outdir, water=water, gmx=gmx,
+            extra_args=extra_args,
+        )
+
+    def summary(self) -> str:
+        """The same overview the command line prints, as a string."""
+        standard = getattr(self.spec, "pka_source", "propka") == "standard"
+        ph = getattr(self.spec, "ph", float("nan"))
+        source = ("standard pKa (PROPKA was not run)" if standard
+                  else "local pKa from PROPKA")
+        changed, forced = self.changed(), self.fixed()
+        out = [
+            f"pH = {ph:.2f}; {source}",
+            f"structure: {self.output_pdb}",
+            f"residues with a shifted state: {len(changed)} "
+            f"(pinned by hand: {len(forced)})",
+        ]
+        if changed:
+            label = "pKa(table)" if standard else "pKa(PROPKA)"
+            out.append("")
+            out.append(f"  chain residue    was -> now   {label}  source")
+            for r in changed:
+                pka = f"{r.pka:8.2f}" if r.pka is not None else "       -"
+                src = ("PINNED" if r.forced else ("table" if standard else "propka"))
+                out.append(
+                    f"  {r.chain:>5} {r.resid:>7}   {r.original:>4} -> "
+                    f"{r.final:<5} {pka}   {src}"
+                )
+        already = [r for r in forced if r.original == r.final]
+        if already:
+            out.append("")
+            out.append("  pinned, state already matched the input name:")
+            out += [f"  {r.chain}:{r.resid} {r.final}" for r in already]
+        if self.termini:
+            out.append("")
+            out.append("chain termini:")
+            out += [f"  {n}" for n in self.termini]
+        if self.warnings:
+            out.append("")
+            out.append("warnings:")
+            out += [f"  ! {w}" for w in self.warnings]
+        out.append("")
+        out.append(f"next:\n  {self.pdb2gmx_cmd}")
+        return "\n".join(out)
+
+    def __str__(self) -> str:  # pragma: no cover - convenience only
+        return self.summary()
 
 
 # ---------------------------------------------------------------- pdb2pqr
@@ -142,11 +244,24 @@ def run_pdb2pqr(
     pqr_biomolecule.Biomolecule.apply_pka_values = patched
     if standard_pka:
         pqr_main.run_propka = patched_propka
+    # main_driver() does not apply --log-level itself, so silence the chatty
+    # pdb2pqr/propka loggers here (they are back to normal with -v/verbose)
+    level = getattr(logging, log_level.upper(), logging.ERROR)
+    noisy = [
+        logging.getLogger(name)
+        for name in list(logging.root.manager.loggerDict)
+        if name.lower().startswith(("pdb2pqr", "propka"))
+    ]
+    saved = [lg.level for lg in noisy]
+    for lg in noisy:
+        lg.setLevel(level)
     try:
         _missed, pka_rows, _bio = pqr_main.main_driver(args)
     finally:
         pqr_biomolecule.Biomolecule.apply_pka_values = original
         pqr_main.run_propka = original_propka
+        for lg, lvl in zip(noisy, saved):
+            lg.setLevel(lvl)
     return pka_rows or []
 
 
@@ -493,18 +608,33 @@ def prepare(
             final_atoms.extend(caps[idx][0])
 
     # --- 6. checks that pdb2gmx would otherwise trip over -----------------
+    protein_used = {a.resname.upper() for a in final_atoms}
     final_atoms.extend(other)
-    used = {a.resname.upper() for a in final_atoms}
+    het_used = {a.resname.upper() for a in other}
+    used = protein_used | het_used
 
     rt_path, known = termini_mod.system_residuetypes()
-    unknown = sorted(n for n in used if known and n not in known)
-    if unknown:
-        problems.append(
-            "residue names " + ", ".join(unknown) + " are absent from "
-            f"residuetypes.dat ({rt_path}) - GROMACS will treat them as "
-            "non-protein and break the chain. Either avoid these states or "
-            "add the names to residuetypes.dat by hand."
-        )
+    if known:
+        # an unknown *protein* name is fatal: GROMACS would treat the residue as
+        # non-protein and break the chain in two
+        unknown = sorted(n for n in protein_used if n not in known)
+        if unknown:
+            problems.append(
+                "residue names " + ", ".join(unknown) + " are absent from "
+                f"residuetypes.dat ({rt_path}) - GROMACS will treat them as "
+                "non-protein and break the chain. Either avoid these states or "
+                "add the names to residuetypes.dat by hand."
+            )
+        # ligands and ions are carried over untouched, so an unknown name there
+        # is the user's business - just say it out loud
+        unknown_het = sorted(n for n in het_used - protein_used if n not in known)
+        if unknown_het:
+            warnings.append(
+                "ligands/ions " + ", ".join(unknown_het) + " are unknown to "
+                f"residuetypes.dat ({rt_path}) and carry no hydrogens: they "
+                "need their own rtp/hdb entries, or drop them (keep_het=False "
+                "/ --drop-het)"
+            )
 
     if spec.hydrogens == "fixed":
         term_notes.append(
@@ -536,7 +666,7 @@ def prepare(
     cmd = _pdb2gmx_command(out_path, ff, water_model)
     return Result(
         output_pdb=out_path, residues=reports, termini=term_notes,
-        warnings=warnings, ff_dir=ff.path, pdb2gmx_cmd=cmd,
+        warnings=warnings, ff_dir=ff.path, pdb2gmx_cmd=cmd, spec=spec,
     )
 
 
